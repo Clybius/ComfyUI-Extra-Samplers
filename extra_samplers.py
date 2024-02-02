@@ -10,6 +10,7 @@ import comfy.sample
 
 import k_diffusion.sampling
 from k_diffusion.sampling import BrownianTreeNoiseSampler, PIDStepSizeController, get_ancestral_step, to_d, default_noise_sampler
+import random
 
 # The following function adds the samplers during initialization, in __init__.py
 def add_samplers():
