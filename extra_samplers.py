@@ -317,7 +317,7 @@ def power_noise_sampler(tensor, alpha=2, k=1): # This doesn't work properly righ
 
 # Below this point are extra samplers
 @torch.no_grad()
-def sample_clyb_4m_sde_momentumized(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1.0, s_noise=1., noise_sampler=None, momentum=0.5):
+def sample_clyb_4m_sde_momentumized(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1.0, s_noise=1., noise_sampler=None, momentum=0.0):
     """DPM-Solver++(3M) SDE, modified with an extra SDE, and momentumized in both the SDE and ODE(?). 'its a first' - Clybius 2023
     The expression for d1 is derived from the extrapolation formula given in the paper “Diffusion Monte Carlo with stochastic Hamiltonians” by M. Foulkes, L. Mitas, R. Needs, and G. Rajagopal. The formula is given as follows:
     d1 = d1_0 + (d1_0 - d1_1) * r2 / (r2 + r1) + ((d1_0 - d1_1) * r2 / (r2 + r1) - (d1_1 - d1_2) * r1 / (r0 + r1)) * r2 / ((r2 + r1) * (r0 + r1))
@@ -447,7 +447,7 @@ def sample_ttm_jvp(model, x, sigmas, extra_args=None, callback=None, disable=Non
 
 # Many thanks to Kat + Birch-San for this wonderful sampler implementation! https://github.com/Birch-san/sdxl-play/commits/res/
 from .other_samplers.refined_exp_solver import sample_refined_exp_s
-def sample_res_solver(model, x, sigmas, extra_args=None, callback=None, disable=None, noise_sampler=None, denoise_to_zero=True, simple_phi_calc=False, c2=0.5, ita=torch.Tensor((0.25,)), momentum=0.5):
+def sample_res_solver(model, x, sigmas, extra_args=None, callback=None, disable=None, noise_sampler=None, denoise_to_zero=True, simple_phi_calc=False, c2=0.5, ita=torch.Tensor((0.25,)), momentum=0.0):
     sigma_min, sigma_max = sigmas[sigmas > 0].min(), sigmas.max()
     seed = extra_args.get("seed", None)
     match noise_sampler:
@@ -611,7 +611,7 @@ def sample_lcmcustom(model, x, sigmas, extra_args=None, callback=None, disable=N
             noise_sampler = lambda sigma, sigma_next: torch.randn_like(x)
     return sample_lcm(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, noise_sampler=noise_sampler)
 
-def sample_clyb_4m_sde(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1., s_noise=1., noise_sampler="brownian", momentum=0.5):
+def sample_clyb_4m_sde(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1., s_noise=1., noise_sampler="brownian", momentum=0.0):
     sigma_min, sigma_max = sigmas[sigmas > 0].min(), sigmas.max()
     seed = extra_args.get("seed", None)
     match noise_sampler:
