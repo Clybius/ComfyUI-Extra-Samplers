@@ -79,7 +79,7 @@ class SamplerRES_MOMENTUMIZED:
     def INPUT_TYPES(s):
         return {"required":
                     {"noise_sampler_type": (["gaussian", "uniform", "brownian", "highres-pyramid", "perlin"], ),
-                     "momentum": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step":0.01}),
+                     "momentum": ("FLOAT", {"default": 0.5, "min": -1.0, "max": 1.0, "step":0.01}),
                      "denoise_to_zero": ("BOOLEAN", {"default": True}),
                      "simple_phi_calc": ("BOOLEAN", {"default": False}),
                      "ita": ("FLOAT", {"default": 0.25, "min": 0.0, "max": 100.0, "step":0.01, "round": False}),
@@ -100,7 +100,7 @@ class SamplerDPMPP_DUALSDE_MOMENTUMIZED:
     def INPUT_TYPES(s):
         return {"required":
                     {"noise_sampler_type": (["gaussian", "uniform", "brownian", "perlin"], ),
-                     "momentum": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step":0.01}),
+                     "momentum": ("FLOAT", {"default": 0.5, "min": -1.0, "max": 1.0, "step":0.01}),
                      "eta": ("FLOAT", {"default": 1, "min": 0.0, "max": 100.0, "step":0.01}),
                      "s_noise": ("FLOAT", {"default": 1, "min": 0.0, "max": 100.0, "step":0.01}),
                      "r": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 100.0, "step":0.01}),
@@ -155,7 +155,7 @@ class SamplerCLYB_4M_SDE_MOMENTUMIZED:
     def INPUT_TYPES(s):
         return {"required":
                     {"noise_sampler_type": (["gaussian", "uniform", "brownian", "highres-pyramid", "perlin"], ),
-                     "momentum": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step":0.01}),
+                     "momentum": ("FLOAT", {"default": 0.5, "min": -1.0, "max": 1.0, "step":0.01}),
                      "eta": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step":0.01}),
                      "s_noise": ("FLOAT", {"default": 1, "min": 0.0, "max": 100.0, "step":0.01}),
                       }
