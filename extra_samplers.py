@@ -314,46 +314,6 @@ def power_noise_sampler(tensor, alpha=2, k=1): # This doesn't work properly righ
     print(variance)
     return lambda sigma, sigma_next: noise / 3
 
-def mixed_noise_sampler(x): # Meant for RES
-    gaussian = torch.randn_like(x)
-    uniform = ((torch.rand_like(x) - 0.5) * 2 * 1.73)
-    
-    # Calculate variances
-    #gaussian_variance = torch.var(gaussian, dim=(-2, -1), keepdim=True)
-    #uniform_variance = torch.var(uniform, dim=(-2, -1), keepdim=True)
-    
-    # Determine weights based on variances
-    #total_variance = gaussian_variance + uniform_variance
-    #gaussian_weight = gaussian_variance / total_variance
-    #uniform_weight = uniform_variance / total_variance
-
-    #mixed_noise = gaussian * gaussian_weight + uniform * uniform_weight
-    #print(gaussian_weight, uniform_weight)
-    mixed_noise = (gaussian * uniform) / 4
-
-    # Return the final mixed noise sample
-    return lambda sigma, sigma_next: mixed_noise
-
-import random
-def pyramid_noise_like(x, discount=0.75):
-    b, c, w, h = x.shape # EDIT: w and h get over-written, rename for a different variant!
-    #noise_vector_magnitude = (torch.linalg.vector_norm(torch.randn_like(x), dim=(1)) + 0.0000000001)[:,None]
-    gauss_noise = torch.randn_like(x)
-    gn_mean = gauss_noise.mean() * 0
-    gn_std = gauss_noise.std() / 2
-
-    noise = torch.nn.functional.interpolate((torch.normal(mean=0, std=0.25, size=(b, c, w // 2, h // 2)).to(x)), size=(w, h), mode='bicubic')
-    noise_2 = torch.nn.functional.interpolate((torch.normal(mean=0, std=0.5, size=(b, c, w * 8, h * 8)).to(x)), size=(w, h), mode='bicubic')
-    noise = noise + noise_2
-    #gauss_mag = (torch.linalg.vector_norm(gauss_noise, dim=(1)) + 0.0000000001)[:,None]
-    #noise_mag = (torch.linalg.vector_norm(noise, dim=(1)) + 0.0000000001)[:,None]
-    #noise /= noise_mag
-    #noise *= gauss_mag
-    #noise_scaled = torch.copysign(torch.pow(torch.abs(noise / noise.max()), 0.95), noise) * 1.4
-    #noise = torch.copysign(torch.pow(torch.abs(noise_scaled), 0.9), noise_scaled) / 1.15
-    
-    return lambda sigma, sigma_next: noise# / 2# / 1.5#torch.copysign(torch.pow(torch.abs(noise), 1.25), noise) * 2 * 1.73#.sub_(noise.mean()).div_(noise.std()) # Scaled back to roughly unit variance
-
 # Below this point are extra samplers
 @torch.no_grad()
 def sample_clyb_4m_sde_momentumized(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1.0, s_noise=1., noise_sampler=None, momentum=0.5):
@@ -484,7 +444,7 @@ def sample_ttm_jvp(model, x, sigmas, extra_args=None, callback=None, disable=Non
 
     return x
 
-
+# Many thanks to Kat + Birch-San for this wonderful sampler implementation! https://github.com/Birch-san/sdxl-play/commits/res/
 from .other_samplers.refined_exp_solver import sample_refined_exp_s
 def sample_res_solver(model, x, sigmas, extra_args=None, callback=None, disable=None, noise_sampler=None, denoise_to_zero=True, simple_phi_calc=False, c2=0.5, ita=torch.Tensor((0.25,)), momentum=0.5):
     sigma_min, sigma_max = sigmas[sigmas > 0].min(), sigmas.max()
@@ -516,15 +476,6 @@ def sample_dpmpp_dualsde_momentum(model, x, sigmas, extra_args=None, callback=No
 
     denoisedsde_1, denoisedsde_2, denoisedsde_3 = None, None, None # new line
     h_1, h_2, h_3 = None, None, None # new line
-
-    #def momentum_func(diff, velocity, timescale=1.0, offset=momentum_offset): # Diff is current diff, vel is previous diff
-    #    if velocity is None:
-    #        momentum_vel = diff
-    #        #print("Setting up momentum")
-    #    else:
-    #        momentum_vel = momentum * (timescale - momentum_offset) * velocity + (1 - momentum * (timescale - momentum_offset)) * diff
-    #        #print("Calculating momentum at", momentum)
-    #    return momentum_vel
 
     def momentum_func(diff, velocity, timescale=1.0, offset=-momentum / 2.0): # Diff is current diff, vel is previous diff
         if velocity is None:
