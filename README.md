@@ -2,8 +2,8 @@
 
 ### Currently included extra samplers: 
 * RES (+ Somewhat naively momentumized and modified, thanks to Kat and Birch-San for the source implementation!)
-* DPMPP Dual SDE (+ Somewhat naively momentumized)
-* Clyb 4M SDE (A modified DPMPP 3M SDE, egotisticalized by yours truly)
+* DPMPP Dual SDE (+ Somewhat naively momentumized, tis simply DPMPP SDE with an added SDE akin to how 3M samples)
+* Clyb 4M SDE (A modified DPMPP 3M SDE, with an added SDE, egotisticalized by yours truly)
 * TTM (Thanks to Kat and Birch-San for the source implementation!)
 * LCM Custom Noise (Supports different types of noise other than generic gaussian)
 
