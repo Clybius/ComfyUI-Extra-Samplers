@@ -8,8 +8,7 @@ from tqdm.auto import trange, tqdm
 
 import comfy.sample
 
-import k_diffusion.sampling
-from k_diffusion.sampling import BrownianTreeNoiseSampler, PIDStepSizeController, get_ancestral_step, to_d, default_noise_sampler
+from comfy.k_diffusion.sampling import BrownianTreeNoiseSampler, PIDStepSizeController, get_ancestral_step, to_d, default_noise_sampler
 import random
 
 # The following function adds the samplers during initialization, in __init__.py
@@ -251,7 +250,7 @@ def highres_pyramid_noise_like(x, discount=0.7):
     u = torch.nn.Upsample(size=(orig_h, orig_w), mode='bilinear')
     noise = (torch.rand_like(x) - 0.5) * 2 * 1.73 # Start with scaled uniform noise
     for i in range(4):
-        r = random.random()*2+2 # Rather than always going 2x, 
+        r = random.random()*2+2 # Rather than always going 2x,
         h, w = min(orig_h*15, int(h*(r**i))), min(orig_w*15, int(w*(r**i)))
         noise += u(torch.randn(b, c, h, w).to(x)) * discount**i
         if h>=orig_h*15 or w>=orig_w*15: break # Lowest resolution is 1x1
@@ -322,7 +321,7 @@ def sample_clyb_4m_sde_momentumized(model, x, sigmas, extra_args=None, callback=
     The expression for d1 is derived from the extrapolation formula given in the paper “Diffusion Monte Carlo with stochastic Hamiltonians” by M. Foulkes, L. Mitas, R. Needs, and G. Rajagopal. The formula is given as follows:
     d1 = d1_0 + (d1_0 - d1_1) * r2 / (r2 + r1) + ((d1_0 - d1_1) * r2 / (r2 + r1) - (d1_1 - d1_2) * r1 / (r0 + r1)) * r2 / ((r2 + r1) * (r0 + r1))
     (if this is an incorrect citing, we blame Google's Bard and OpenAI's ChatGPT for this and NOT me :^) )
-     
+
     where d1_0, d1_1, and d1_2 are defined as follows:
     d1_0 = (denoised - denoised_1) / r2
     d1_1 = (denoised_1 - denoised_2) / r1
@@ -403,7 +402,7 @@ def sample_clyb_4m_sde_momentumized(model, x, sigmas, extra_args=None, callback=
             if eta:
                 x = x + noise_sampler(sigmas[i], sigmas[i + 1]) * sigmas[i + 1] * (-2 * h * eta).expm1().neg().sqrt() * s_noise
 
-            denoised_1, denoised_2, denoised_3 = denoised, denoised_1, denoised_2 
+            denoised_1, denoised_2, denoised_3 = denoised, denoised_1, denoised_2
             h_1, h_2, h_3 = h, h_1, h_2
     return x
 
@@ -596,7 +595,7 @@ def sample_ttmcustom(model, x, sigmas, extra_args=None, callback=None, disable=N
             noise_sampler = lambda sigma, sigma_next: torch.randn_like(x)
     return sample_ttm_jvp(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta=eta, s_noise=s_noise, noise_sampler=noise_sampler)
 
-from k_diffusion.sampling import sample_lcm
+from comfy.k_diffusion.sampling import sample_lcm
 def sample_lcmcustom(model, x, sigmas, extra_args=None, callback=None, disable=None, noise_sampler=None):
     sigma_min, sigma_max = sigmas[sigmas > 0].min(), sigmas.max()
     seed = extra_args.get("seed", None)
