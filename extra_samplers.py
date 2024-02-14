@@ -15,16 +15,21 @@ import random
 # The following function adds the samplers during initialization, in __init__.py
 def add_samplers():
     from comfy.samplers import KSampler, k_diffusion_sampling
+    if hasattr(KSampler, "DISCARD_PENULTIMATE_SIGMA_SAMPLERS"):
+        KSampler.DISCARD_PENULTIMATE_SIGMA_SAMPLERS |= discard_penultimate_sigma_samplers
+    added = 0
     for sampler in extra_samplers: #getattr(self, "sample_{}".format(extra_samplers))
         if sampler not in KSampler.SAMPLERS:
             try:
                 idx = KSampler.SAMPLERS.index("uni_pc_bh2") # Last item in the samplers list
                 KSampler.SAMPLERS.insert(idx+1, sampler) # Add our custom samplers
                 setattr(k_diffusion_sampling, "sample_{}".format(sampler), extra_samplers[sampler])
-                import importlib
-                importlib.reload(k_diffusion_sampling)
-            except ValueError as err:
+                added += 1
+            except ValueError as _err:
                 pass
+    if added > 0:
+        import importlib
+        importlib.reload(k_diffusion_sampling)
 
 # The following function adds the samplers during initialization, in __init__.py
 def add_schedulers():
@@ -251,7 +256,7 @@ def highres_pyramid_noise_like(x, discount=0.7):
     u = torch.nn.Upsample(size=(orig_h, orig_w), mode='bilinear')
     noise = (torch.rand_like(x) - 0.5) * 2 * 1.73 # Start with scaled uniform noise
     for i in range(4):
-        r = random.random()*2+2 # Rather than always going 2x, 
+        r = random.random()*2+2 # Rather than always going 2x,
         h, w = min(orig_h*15, int(h*(r**i))), min(orig_w*15, int(w*(r**i)))
         noise += u(torch.randn(b, c, h, w).to(x)) * discount**i
         if h>=orig_h*15 or w>=orig_w*15: break # Lowest resolution is 1x1
@@ -322,7 +327,7 @@ def sample_clyb_4m_sde_momentumized(model, x, sigmas, extra_args=None, callback=
     The expression for d1 is derived from the extrapolation formula given in the paper “Diffusion Monte Carlo with stochastic Hamiltonians” by M. Foulkes, L. Mitas, R. Needs, and G. Rajagopal. The formula is given as follows:
     d1 = d1_0 + (d1_0 - d1_1) * r2 / (r2 + r1) + ((d1_0 - d1_1) * r2 / (r2 + r1) - (d1_1 - d1_2) * r1 / (r0 + r1)) * r2 / ((r2 + r1) * (r0 + r1))
     (if this is an incorrect citing, we blame Google's Bard and OpenAI's ChatGPT for this and NOT me :^) )
-     
+
     where d1_0, d1_1, and d1_2 are defined as follows:
     d1_0 = (denoised - denoised_1) / r2
     d1_1 = (denoised_1 - denoised_2) / r1
@@ -403,7 +408,7 @@ def sample_clyb_4m_sde_momentumized(model, x, sigmas, extra_args=None, callback=
             if eta:
                 x = x + noise_sampler(sigmas[i], sigmas[i + 1]) * sigmas[i + 1] * (-2 * h * eta).expm1().neg().sqrt() * s_noise
 
-            denoised_1, denoised_2, denoised_3 = denoised, denoised_1, denoised_2 
+            denoised_1, denoised_2, denoised_3 = denoised, denoised_1, denoised_2
             h_1, h_2, h_3 = h, h_1, h_2
     return x
 
@@ -639,3 +644,10 @@ extra_samplers = {
     "ttm": sample_ttmcustom,
     "lcm_custom_noise": sample_lcmcustom,
 }
+
+discard_penultimate_sigma_samplers = set((
+    "dpmpp_dualsde_momentumized",
+    "clyb_4m_sde_momentumized"
+))
+
+extra_schedulers = {}
