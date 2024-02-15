@@ -13,5 +13,6 @@ NODE_CLASS_MAPPINGS = {
     "SamplerCLYB_4M_SDE_Momentumized": nodes.SamplerCLYB_4M_SDE_MOMENTUMIZED,
     "SamplerTTM": nodes.SamplerTTM,
     "SamplerLCMCustom": nodes.SamplerLCMCustom,
+    "SamplerEulerAncestralDancing_Experimental": nodes.SamplerEULER_ANCESTRAL_DANCING,
 }
 __all__ = ['NODE_CLASS_MAPPINGS']

@@ -1,6 +1,5 @@
 import math
 
-from scipy import integrate
 import torch
 from torch import nn
 import torchsde
@@ -244,6 +243,16 @@ def studentt_noise_sampler(x): # Produces more subject-focused outputs due to di
     print(s)
     return lambda sigma, sigma_next: noise.to(x.device) / (7/3)
 
+from torch.distributions import Laplace
+def rand_laplacian_like(x):
+    noise = torch.randn_like(x) / 4.0
+    noise_size_H = noise.size(dim=2)
+    noise_size_W = noise.size(dim=3)
+    noise += Laplace(loc=0, scale=1.0).rsample(x.size()).to(noise.device)
+    #noise += perlin
+    #print(noise)
+    return noise / noise.std()
+
 def highres_pyramid_noise_like(x, discount=0.7):
     b, c, h, w = x.shape # EDIT: w and h get over-written, rename for a different variant!
     orig_h = h
@@ -461,6 +470,8 @@ def sample_res_solver(model, x, sigmas, extra_args=None, callback=None, disable=
             noise_sampler = lambda sigma, sigma_next: highres_pyramid_noise_like(x)
         case "perlin":
             noise_sampler = lambda sigma, sigma_next: rand_perlin_like(x)
+        case "laplacian":
+            noise_sampler = lambda sigma, sigma_next: rand_laplacian_like(x)
         case _:
             noise_sampler = lambda sigma, sigma_next: torch.randn_like(x)
     return sample_refined_exp_s(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, noise_sampler=noise_sampler, denoise_to_zero=denoise_to_zero, simple_phi_calc=simple_phi_calc, c2=c2, ita=ita, momentum=momentum)
@@ -577,6 +588,8 @@ def sample_dpmpp_dualsdemomentum(model, x, sigmas, extra_args=None, callback=Non
             noise_sampler = lambda sigma, sigma_next: (torch.rand_like(x) - 0.5) * 2 * 1.73
         case "perlin":
             noise_sampler = lambda sigma, sigma_next: rand_perlin_like(x)
+        case "laplacian":
+            noise_sampler = lambda sigma, sigma_next: rand_laplacian_like(x)
         case _:
             noise_sampler = lambda sigma, sigma_next: torch.randn_like(x)
     return sample_dpmpp_dualsde_momentum(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta=eta, s_noise=s_noise, noise_sampler=noise_sampler, r=r, momentum=momentum)
@@ -625,9 +638,140 @@ def sample_clyb_4m_sde(model, x, sigmas, extra_args=None, callback=None, disable
             noise_sampler = lambda sigma, sigma_next: highres_pyramid_noise_like(x)
         case "perlin":
             noise_sampler = lambda sigma, sigma_next: rand_perlin_like(x)
+        case "laplacian":
+            noise_sampler = lambda sigma, sigma_next: rand_laplacian_like(x)
         case _:
             noise_sampler = lambda sigma, sigma_next: (torch.rand_like(x) - 0.5) * 2 * 1.73
     return sample_clyb_4m_sde_momentumized(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta=eta, s_noise=s_noise, noise_sampler=noise_sampler, momentum=momentum)
+
+"""
+# This code works, but I'm currently experimenting with different methods
+@torch.no_grad()
+def sampler_euler_ancestral_dancing(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1., s_noise=1., noise_sampler=None, leap=2, eta_dance=1.0):
+    #Ancestral sampling with Euler method steps, dancing steps.
+    extra_args = {} if extra_args is None else extra_args
+    noise_sampler = default_noise_sampler(x) if noise_sampler is None else noise_sampler
+    unsample_noise_sampler = lambda sigma, sigma_next: torch.randn_like(x)
+    s_in = x.new_ones([x.shape[0]])
+    for i in trange(len(sigmas) - 1, disable=disable):
+        if i < len(sigmas) - leap:
+            is_danceable = sigmas[i + leap] > 0
+        else:
+            is_danceable = False
+        denoised = model(x, sigmas[i] * s_in, **extra_args)
+        sigma_down, sigma_up = get_ancestral_step(sigmas[i], sigmas[i + leap] if is_danceable else sigmas[i + 1], eta=eta)
+        if callback is not None:
+            callback({'x': x, 'i': i, 'sigma': sigmas[i], 'sigma_hat': sigmas[i], 'denoised': denoised})
+        d = to_d(x, sigmas[i], denoised)
+        # Euler method
+        dt = sigma_down - sigmas[i]
+        x = x + d * dt
+        if sigmas[i + 1] > 0:
+            if is_danceable:
+                x = x + noise_sampler(sigmas[i], sigmas[i + leap]) * s_noise * sigma_up
+                #x = x + noise_sampler(sigmas[i + 2], sigmas[i + 1]) * s_noise * sigma_up
+                #denoised2 = model(x, sigmas[i + 2] * s_in, **extra_args)
+                sigma_down2, sigma_up2 = get_ancestral_step(sigmas[i + leap], sigmas[i + 1], eta=eta_dance)
+                d_2 = to_d(x, sigmas[i + leap], denoised)
+                dt_2 = sigma_down2 - sigmas[i + leap]
+                x = x + d_2 * dt_2
+                x = x + noise_sampler(sigmas[i + leap], sigmas[i + 1]) * s_noise * sigma_up2
+
+                #sigma_down3, sigma_up3 = get_ancestral_step(sigmas[i], sigmas[i + 1], eta=eta)
+                #x = x + noise_sampler(sigmas[i], sigmas[i + 1]) * s_noise * sigma_up3
+
+                #denoised2 = model(x, sigmas[i] * s_in, **extra_args)
+                #d_3 = to_d(x, sigmas[i], denoised2)
+                #dt_3 = sigma_down3 - sigmas[i]
+                #x = x + d_3 * dt_3 + d_2 * dt_2
+                #print(dt_3, dt_2)
+                #x = x + noise_sampler(sigmas[i], sigmas[i + 1]) * s_noise * sigma_up3
+                #x = x + d * dt
+            else:
+                x = x + noise_sampler(sigmas[i], sigmas[i + 1]) * s_noise * sigma_up
+
+    return x
+"""
+def rej(a, b):
+    """
+    Implements the rejection function for alternative diffusion.
+
+    Args:
+        a: Tensor of shape (B, H, W, C), where B is batch size, H and W are spatial dimensions, and C is number of channels.
+        b: Tensor of the same shape as a.
+
+    Returns:
+        Tensor of the same shape as a and b, containing the rejection output.
+    """
+    return (b * torch.tensordot(a, b, dims=len(a.shape)) / torch.tensordot(b, b, dims=len(a.shape))) - a
+
+@torch.no_grad()
+def sampler_euler_ancestral_dancing(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1., s_noise=1., noise_sampler=None, leap=2, eta_dance=1.0):
+    #Ancestral sampling with Euler method steps, dancing steps.
+    extra_args = {} if extra_args is None else extra_args
+    noise_sampler = default_noise_sampler(x) if noise_sampler is None else noise_sampler
+    unsample_noise_sampler = lambda sigma, sigma_next: torch.randn_like(x)
+    s_in = x.new_ones([x.shape[0]])
+    for i in trange(len(sigmas) - 1, disable=disable):
+        if i < len(sigmas) - leap:
+            is_danceable = sigmas[i + leap] > 0
+        else:
+            is_danceable = False
+        orig_x = x
+        denoised = model(x, sigmas[i] * s_in, **extra_args)
+        sigma_down, sigma_up = get_ancestral_step(sigmas[i], sigmas[i + leap] if is_danceable else sigmas[i + 1], eta=eta)
+        if callback is not None:
+            callback({'x': x, 'i': i, 'sigma': sigmas[i], 'sigma_hat': sigmas[i], 'denoised': denoised})
+        d = to_d(x, sigmas[i], denoised)
+        # Euler method
+        dt = sigma_down - sigmas[i]
+        x = x + d * dt
+        if sigmas[i + 1] > 0:
+            if is_danceable:
+                #x = x + noise_sampler(sigmas[i], sigmas[i + leap]) * s_noise * sigma_up
+                #x = x + noise_sampler(sigmas[i + 2], sigmas[i + 1]) * s_noise * sigma_up
+                denoised2 = model(x, sigmas[i + leap] * s_in, **extra_args)
+                sigma_down2, sigma_up2 = get_ancestral_step(sigmas[i + leap], sigmas[i + 1], eta=eta_dance)
+                d_2 = to_d(x, sigmas[i + leap], denoised2)
+                dt_2 = sigma_down2 - sigmas[i + leap]
+                x_2 = x + d_2 * dt_2
+                #x_2 = x_2 + noise_sampler(sigmas[i + leap], sigmas[i]) * s_noise * sigma_up2
+
+                sigma_down3, sigma_up3 = get_ancestral_step(sigmas[i], sigmas[i + 1], eta=eta)
+                #x = x + noise_sampler(sigmas[i], sigmas[i + 1]) * s_noise * sigma_up3
+
+                denoised3 = model(x_2, sigmas[i] * s_in, **extra_args)
+                d_3 = to_d(orig_x, sigmas[i], denoised3 + rej(denoised3 - denoised, denoised2 - denoised))
+                #d_3 = to_d(x_2, sigmas[i], denoised3)
+                dt_3 = sigma_down3 - sigmas[i]
+                x = orig_x + d_3 * dt_3 # Very denoised, slightly denoised
+                #print(dt_3, dt_2)
+                x = x + noise_sampler(sigmas[i], sigmas[i + 1]) * s_noise * sigma_up3
+                #x = x + d * dt
+            else:
+                x = x + noise_sampler(sigmas[i], sigmas[i + 1]) * s_noise * sigma_up
+
+    return x
+
+def sample_euler_ancestral_dancing(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1., s_noise=1., noise_sampler="gaussian", leap=2, eta_dance=1.0):
+    sigma_min, sigma_max = sigmas[sigmas > 0].min(), sigmas.max()
+    seed = extra_args.get("seed", None)
+    match noise_sampler:
+        case "brownian":
+            noise_sampler = BrownianTreeNoiseSampler(x, sigma_min, sigma_max, seed=seed, cpu=False)
+        case "gaussian":
+            noise_sampler = lambda sigma, sigma_next: torch.randn_like(x)
+        case "uniform":
+            noise_sampler = lambda sigma, sigma_next: (torch.rand_like(x) - 0.5) * 2 * 1.73
+        case "highres-pyramid":
+            noise_sampler = lambda sigma, sigma_next: highres_pyramid_noise_like(x)
+        case "perlin":
+            noise_sampler = lambda sigma, sigma_next: rand_perlin_like(x)
+        case "laplacian":
+            noise_sampler = lambda sigma, sigma_next: rand_laplacian_like(x)
+        case _:
+            noise_sampler = lambda sigma, sigma_next: (torch.rand_like(x) - 0.5) * 2 * 1.73
+    return sampler_euler_ancestral_dancing(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta=eta, s_noise=s_noise, noise_sampler=noise_sampler, leap=leap, eta_dance=eta_dance)
 
 # Add your personal samplers below here, just for formatting purposes ;3
 
@@ -638,4 +782,5 @@ extra_samplers = {
     "clyb_4m_sde_momentumized": sample_clyb_4m_sde,
     "ttm": sample_ttmcustom,
     "lcm_custom_noise": sample_lcmcustom,
+    "euler_ancestral_dancing": sample_euler_ancestral_dancing,
 }

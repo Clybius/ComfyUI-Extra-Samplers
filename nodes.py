@@ -78,7 +78,7 @@ class SamplerRES_MOMENTUMIZED:
     @classmethod
     def INPUT_TYPES(s):
         return {"required":
-                    {"noise_sampler_type": (["gaussian", "uniform", "brownian", "highres-pyramid", "perlin"], ),
+                    {"noise_sampler_type": (["gaussian", "uniform", "brownian", "highres-pyramid", "perlin", "laplacian"], ),
                      "momentum": ("FLOAT", {"default": 0.5, "min": -1.0, "max": 1.0, "step":0.01}),
                      "denoise_to_zero": ("BOOLEAN", {"default": True}),
                      "simple_phi_calc": ("BOOLEAN", {"default": False}),
@@ -99,7 +99,7 @@ class SamplerDPMPP_DUALSDE_MOMENTUMIZED:
     @classmethod
     def INPUT_TYPES(s):
         return {"required":
-                    {"noise_sampler_type": (["gaussian", "uniform", "brownian", "perlin"], ),
+                    {"noise_sampler_type": (["gaussian", "uniform", "brownian", "perlin", "laplacian"], ),
                      "momentum": ("FLOAT", {"default": 0.5, "min": -1.0, "max": 1.0, "step":0.01}),
                      "eta": ("FLOAT", {"default": 1, "min": 0.0, "max": 100.0, "step":0.01}),
                      "s_noise": ("FLOAT", {"default": 1, "min": 0.0, "max": 100.0, "step":0.01}),
@@ -154,7 +154,7 @@ class SamplerCLYB_4M_SDE_MOMENTUMIZED:
     @classmethod
     def INPUT_TYPES(s):
         return {"required":
-                    {"noise_sampler_type": (["gaussian", "uniform", "brownian", "highres-pyramid", "perlin"], ),
+                    {"noise_sampler_type": (["gaussian", "uniform", "brownian", "highres-pyramid", "perlin", "laplacian"], ),
                      "momentum": ("FLOAT", {"default": 0.5, "min": -1.0, "max": 1.0, "step":0.01}),
                      "eta": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step":0.01}),
                      "s_noise": ("FLOAT", {"default": 1, "min": 0.0, "max": 100.0, "step":0.01}),
@@ -167,6 +167,26 @@ class SamplerCLYB_4M_SDE_MOMENTUMIZED:
 
     def get_sampler(self, noise_sampler_type, eta, s_noise, momentum):
         sampler = comfy.samplers.ksampler("clyb_4m_sde_momentumized", {"noise_sampler": noise_sampler_type, "eta": eta, "s_noise": s_noise, "momentum": momentum})
+        return (sampler, )
+
+class SamplerEULER_ANCESTRAL_DANCING:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required":
+                    {"noise_sampler_type": (["gaussian", "uniform", "brownian", "highres-pyramid", "perlin", "laplacian"], ),
+                     "eta": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step":0.01}),
+                     "eta_dance": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step":0.01}),
+                     "s_noise": ("FLOAT", {"default": 1, "min": 0.0, "max": 100.0, "step":0.01}),
+                     "leap": ("INT", {"default": 2, "min": 1, "max": 16, "step":1}),
+                      }
+               }
+    RETURN_TYPES = ("SAMPLER",)
+    CATEGORY = "sampling/custom_sampling"
+
+    FUNCTION = "get_sampler"
+
+    def get_sampler(self, noise_sampler_type, eta, s_noise, leap, eta_dance):
+        sampler = comfy.samplers.ksampler("euler_ancestral_dancing", {"noise_sampler": noise_sampler_type, "eta": eta, "s_noise": s_noise, "leap": leap, "eta_dance": eta_dance})
         return (sampler, )
 
 from comfy import model_management
