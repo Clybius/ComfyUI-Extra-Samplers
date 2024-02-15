@@ -1,4 +1,4 @@
-from k_diffusion.sampling import default_noise_sampler, to_d
+from comfy.k_diffusion.sampling import default_noise_sampler, to_d
 from tqdm import trange
 import torch
 from torch import enable_grad

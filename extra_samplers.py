@@ -7,8 +7,7 @@ from tqdm.auto import trange, tqdm
 
 import comfy.sample
 
-import k_diffusion.sampling
-from k_diffusion.sampling import BrownianTreeNoiseSampler, PIDStepSizeController, get_ancestral_step, to_d, default_noise_sampler
+from comfy.k_diffusion.sampling import BrownianTreeNoiseSampler, PIDStepSizeController, get_ancestral_step, to_d, default_noise_sampler
 import random
 
 # The following function adds the samplers during initialization, in __init__.py
@@ -614,7 +613,7 @@ def sample_ttmcustom(model, x, sigmas, extra_args=None, callback=None, disable=N
             noise_sampler = lambda sigma, sigma_next: torch.randn_like(x)
     return sample_ttm_jvp(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta=eta, s_noise=s_noise, noise_sampler=noise_sampler)
 
-from k_diffusion.sampling import sample_lcm
+from comfy.k_diffusion.sampling import sample_lcm
 def sample_lcmcustom(model, x, sigmas, extra_args=None, callback=None, disable=None, noise_sampler=None):
     sigma_min, sigma_max = sigmas[sigmas > 0].min(), sigmas.max()
     seed = extra_args.get("seed", None)
