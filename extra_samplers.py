@@ -1,7 +1,7 @@
 import math
 
 import torch
-from torch import nn
+from torch import nn, FloatTensor
 import torchsde
 from tqdm.auto import trange, tqdm
 
@@ -223,7 +223,7 @@ def rand_perlin_like(x):
     noise_size_W = noise.size(dim=3)
     perlin = None
     for i in range(2):
-        noise += perlin_noise((noise_size_H, noise_size_W), (noise_size_H, noise_size_W), batch_size=4).to(x.device)
+        noise += perlin_noise((noise_size_H, noise_size_W), (noise_size_H, noise_size_W), batch_size=x.shape[1]).to(x.device)
     #noise += perlin
     #print(noise)
     return noise / noise.std()
