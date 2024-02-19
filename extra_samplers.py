@@ -8,7 +8,6 @@ from tqdm.auto import trange, tqdm
 import comfy.sample
 
 from comfy.k_diffusion.sampling import BrownianTreeNoiseSampler, PIDStepSizeController, get_ancestral_step, to_d, default_noise_sampler
-import random
 
 # The following function adds the samplers during initialization, in __init__.py
 def add_samplers():
@@ -264,7 +263,7 @@ def highres_pyramid_noise_like(x, discount=0.7):
     u = torch.nn.Upsample(size=(orig_h, orig_w), mode='bilinear')
     noise = (torch.rand_like(x) - 0.5) * 2 * 1.73 # Start with scaled uniform noise
     for i in range(4):
-        r = random.random()*2+2 # Rather than always going 2x,
+        r = torch.rand(1).item() * 2 + 2 # Rather than always going 2x,
         h, w = min(orig_h*15, int(h*(r**i))), min(orig_w*15, int(w*(r**i)))
         noise += u(torch.randn(b, c, h, w).to(x)) * discount**i
         if h>=orig_h*15 or w>=orig_w*15: break # Lowest resolution is 1x1
