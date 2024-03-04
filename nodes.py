@@ -62,7 +62,7 @@ def prepare_noise(latent_image, seed, noise_type, noise_inds=None): # From `samp
             noise_func = torch.randn
     if noise_inds is None:
         return noise_func(latent_image.size(), dtype=latent_image.dtype, layout=latent_image.layout, generator=generator, device="cpu")
-    
+
     unique_inds, inverse = np.unique(noise_inds, return_inverse=True)
     noises = []
     for i in range(unique_inds[-1]+1):
@@ -365,11 +365,12 @@ class SamplerCustomNoise:
         latent = latent_image
         latent_image = latent["samples"]
         if not add_noise:
+            torch.manual_seed(noise_seed)
             noise = torch.zeros(latent_image.size(), dtype=latent_image.dtype, layout=latent_image.layout, device="cpu")
         else:
             batch_inds = latent["batch_index"] if "batch_index" in latent else None
             noise = prepare_noise(latent_image, noise_seed, noise_type, batch_inds)
-        
+
         if noise_is_latent:
             noise += latent_image.cpu()# * noise.std()
             noise.sub_(noise.mean()).div_(noise.std())
@@ -428,6 +429,7 @@ class SamplerCustomNoiseDuo:
         latent = latent_image
         latent_image = latent["samples"]
         if not add_noise:
+            torch.manual_seed(noise_seed)
             noise = torch.zeros(latent_image.size(), dtype=latent_image.dtype, layout=latent_image.layout, device="cpu")
         else:
             batch_inds = latent["batch_index"] if "batch_index" in latent else None
@@ -500,6 +502,7 @@ class SamplerCustomModelMixtureDuo:
         latent = latent_image
         latent_image = latent["samples"]
         if not add_noise:
+            torch.manual_seed(noise_seed)
             noise = torch.zeros(latent_image.size(), dtype=latent_image.dtype, layout=latent_image.layout, device="cpu")
         else:
             batch_inds = latent["batch_index"] if "batch_index" in latent else None
