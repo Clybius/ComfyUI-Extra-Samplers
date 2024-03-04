@@ -7,7 +7,6 @@ import torch
 import numpy as np
 from tqdm.auto import trange
 
-import random
 def pyramid_noise_like(size, dtype, layout, generator, device="cpu", discount=0.8):
     b, c, h, w = size
     orig_h = h
@@ -15,7 +14,7 @@ def pyramid_noise_like(size, dtype, layout, generator, device="cpu", discount=0.
     noise = torch.zeros(size=size, dtype=dtype, layout=layout, device=device)
     r = 1
     for i in range(5):
-        r *= 2 # Rather than always going 2x, 
+        r *= 2 # Rather than always going 2x,
         #w, h = max(1, int(w/(r**i))), max(1, int(h/(r**i)))
         noise += torch.nn.functional.interpolate((torch.normal(mean=0, std=0.5 ** i, size=(b, c, h * r, w * r), dtype=dtype, layout=layout, generator=generator, device=device)), size=(orig_h, orig_w), mode='nearest-exact') * discount**i
         #if w>=orig_w*16 or h>=orig_h*16: break
@@ -189,6 +188,52 @@ class SamplerEULER_ANCESTRAL_DANCING:
         sampler = comfy.samplers.ksampler("euler_ancestral_dancing", {"noise_sampler": noise_sampler_type, "eta": eta, "s_noise": s_noise, "leap": leap, "eta_dance": eta_dance})
         return (sampler, )
 
+class SamplerDPMPP_3M_SDE_DYN_ETA:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required":
+                    {"noise_sampler_type": (["gaussian", "uniform", "brownian", "highres-pyramid", "perlin", "laplacian"], ),
+                     "eta_max": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step":0.01}),
+                     "eta_min": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 100.0, "step":0.01}),
+                     "s_noise": ("FLOAT", {"default": 1, "min": 0.0, "max": 100.0, "step":0.01}),
+                      }
+               }
+    RETURN_TYPES = ("SAMPLER",)
+    CATEGORY = "sampling/custom_sampling"
+
+    FUNCTION = "get_sampler"
+
+    def get_sampler(self, noise_sampler_type, eta_max, eta_min, s_noise):
+        sampler = comfy.samplers.ksampler("dpmpp_3m_sde_dynamic_eta", {"noise_sampler": noise_sampler_type, "eta_max": eta_max, "eta_min": eta_min, "s_noise": s_noise})
+        return (sampler, )
+
+### Schedulers
+from .extra_samplers import get_sigmas_simple_exponential
+class SimpleExponentialScheduler:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required":
+                    {"model": ("MODEL",),
+                     "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
+                     "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                      }
+               }
+    RETURN_TYPES = ("SIGMAS",)
+    CATEGORY = "clybNodes/schedulers"
+
+    FUNCTION = "get_sigmas"
+
+    def get_sigmas(self, model, steps, denoise):
+        total_steps = steps
+        if denoise < 1.0:
+            total_steps = int(steps/denoise)
+
+        sigmas = get_sigmas_simple_exponential(model.model, total_steps).cpu()
+        sigmas = sigmas[-(steps + 1):]
+        return (sigmas, )
+
+### KSampler Nodes
+
 from comfy import model_management
 import comfy.utils
 import comfy.conds
@@ -268,10 +313,10 @@ def mixture_sample(model, model2, noise, positive, positive2, negative, negative
             temp_sigmas2 = sigmas2[-2:]
         if (i % 2) == 0:
             #print(temp_sigmas)
-            samples = sampler.sample(model_wrap, temp_sigmas, extra_args, callback, noise.to(device) if i is 0 else torch.zeros(latent_image.size(), dtype=latent_image.dtype, layout=latent_image.layout, device=device), samples if samples is not None else latent_image, denoise_mask, True)
+            samples = sampler.sample(model_wrap, temp_sigmas, extra_args, callback, noise.to(device) if i == 0 else torch.zeros(latent_image.size(), dtype=latent_image.dtype, layout=latent_image.layout, device=device), samples if samples is not None else latent_image, denoise_mask, True)
         else:
             #print(temp_sigmas)
-            samples = sampler2.sample(model_wrap2, temp_sigmas2, extra_args2, callback2, noise.to(device2) if i is 0 else torch.zeros(latent_image.size(), dtype=latent_image.dtype, layout=latent_image.layout, device=device2), samples if samples is not None else latent_image, denoise_mask2, True)
+            samples = sampler2.sample(model_wrap2, temp_sigmas2, extra_args2, callback2, noise.to(device2) if i == 0 else torch.zeros(latent_image.size(), dtype=latent_image.dtype, layout=latent_image.layout, device=device2), samples if samples is not None else latent_image, denoise_mask2, True)
     return model.process_latent_out(samples.to(torch.float32))
 
 def sample_mixture(model, model2, noise, cfg, cfg2, sampler, sampler2, sigmas, sigmas2, positive, negative, latent_image, noise_mask=None, callback=None, callback2=None, disable_pbar=False, seed=None):

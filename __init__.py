@@ -14,5 +14,8 @@ NODE_CLASS_MAPPINGS = {
     "SamplerTTM": nodes.SamplerTTM,
     "SamplerLCMCustom": nodes.SamplerLCMCustom,
     "SamplerEulerAncestralDancing_Experimental": nodes.SamplerEULER_ANCESTRAL_DANCING,
+    "SamplerDPMPP_3M_SDE_DynETA": nodes.SamplerDPMPP_3M_SDE_DYN_ETA,
+    ### Schedulers
+    "SimpleExponentialScheduler": nodes.SimpleExponentialScheduler,
 }
 __all__ = ['NODE_CLASS_MAPPINGS']
