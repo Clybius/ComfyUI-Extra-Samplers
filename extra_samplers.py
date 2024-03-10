@@ -4,6 +4,7 @@ import torch
 from torch import nn, FloatTensor
 import torchsde
 from tqdm.auto import trange, tqdm
+import numpy as np
 
 import comfy.sample
 
@@ -45,11 +46,32 @@ def add_schedulers():
         import importlib
         importlib.reload(k_diffusion_sampling)
 
+
 # Noise samplers
+NOISE_SAMPLER_NAMES=("gaussian", "uniform", "brownian", "highres-pyramid", "pyramid", "perlin", "laplacian")
+
+def get_noise_sampler_names(default=None):
+    if not default:
+        return NOISE_SAMPLER_NAMES
+    return (default,) + tuple(n for n in NOISE_SAMPLER_NAMES if n != default)
+
+def mk_noise_sampler(x, fun):
+    return lambda _sigma, _sigma_next: fun(x)
+
+def get_noise_sampler(x, sigmas, noise_sampler_type="brownian", extra_args=None, cpu=False):
+    if noise_sampler_type == "brownian":
+        seed = extra_args.get("seed", None) if extra_args else None
+        sigma_min, sigma_max = sigmas[sigmas > 0].min(), sigmas.max()
+        return BrownianTreeNoiseSampler(x, sigma_min, sigma_max, seed=seed, cpu=cpu)
+    return mk_noise_sampler(x, NOISE_SAMPLER_HANDLERS.get(noise_sampler_type, uniform_noise_like))
+
 from torch import Generator, Tensor, lerp
 from torch.nn.functional import unfold
 from typing import Callable, Tuple
 from math import pi
+
+def uniform_noise_like(x):
+    return (torch.rand_like(x) - 0.5) * 2 * 1.73
 
 def get_positions(block_shape: Tuple[int, int]) -> Tensor:
     """
@@ -307,7 +329,8 @@ def green_noise_sampler(x): # This doesn't work properly right now
     print(noise)
     return lambda sigma, sigma_next: noise
 
-def power_noise_sampler(tensor, alpha=2, k=1): # This doesn't work properly right now
+# I'm not sure how this differs from the other implementation but it doesn't seem to be used at present.
+def power_noise_sampler_2(tensor, alpha=2, k=1): # This doesn't work properly right now
     """Generate 1/f noise for a given tensor.
 
     Args:
@@ -329,6 +352,83 @@ def power_noise_sampler(tensor, alpha=2, k=1): # This doesn't work properly righ
     variance = torch.var(noise, dim=(-2, -1), keepdim=True)
     print(variance)
     return lambda sigma, sigma_next: noise / 3
+
+def pyramid_noise_like(size, dtype, layout, generator, device="cpu", discount=0.8):
+    b, c, h, w = size
+    orig_h = h
+    orig_w = w
+    noise = torch.zeros(size=size, dtype=dtype, layout=layout, device=device)
+    r = 1
+    for i in range(5):
+        r *= 2 # Rather than always going 2x,
+        #w, h = max(1, int(w/(r**i))), max(1, int(h/(r**i)))
+        noise += torch.nn.functional.interpolate((torch.normal(mean=0, std=0.5 ** i, size=(b, c, h * r, w * r), dtype=dtype, layout=layout, generator=generator, device=device)), size=(orig_h, orig_w), mode='nearest-exact') * discount**i
+        #if w>=orig_w*16 or h>=orig_h*16: break
+    return noise
+
+def power_noise_sampler(size, dtype, layout, generator, device="cpu", alpha=2, k=1): # This doesn't work properly right now
+    """Generate 1/f noise for a given tensor.
+
+    Args:
+        tensor: The tensor to add noise to.
+        alpha: The parameter that determines the slope of the spectrum.
+        k: A constant.
+
+    Returns:
+        A tensor with the same shape as `tensor` containing 1/f noise.
+    """
+    tensor = torch.randn(size=size, dtype=dtype, layout=layout, generator=generator, device=device)
+    fft = torch.fft.fft2(tensor)
+    freq = torch.arange(1, len(fft) + 1, dtype=torch.float)
+    spectral_density = k / freq**alpha
+    noise = torch.rand(size=size, dtype=dtype, layout=layout, generator=generator, device=device) * spectral_density
+    mean = torch.mean(noise, dim=(-2, -1), keepdim=True).to(tensor.device)
+    std = torch.std(noise, dim=(-2, -1), keepdim=True).to(tensor.device)
+    noise = noise.to(tensor.device).sub_(mean).div_(std)
+    return noise
+
+def prepare_noise(latent_image, seed, noise_type, noise_inds=None): # From `sample.py`
+    """
+    creates random noise given a latent image and a seed.
+    optional arg skip can be used to skip and discard x number of noise generations for a given seed
+    """
+    generator = torch.manual_seed(seed)
+    match noise_type:
+        case "gaussian":
+            noise_func = torch.randn
+        case "uniform":
+            def uniform_rand(*size, **kwargs):
+                return (torch.rand(*size, **kwargs) - 0.5) * 2 * 1.73
+            noise_func = uniform_rand
+        case "pyramid":
+            noise_func = pyramid_noise_like
+        case "power":
+            noise_func = power_noise_sampler
+        case _:
+            noise_func = torch.randn
+    if noise_inds is None:
+        return noise_func(latent_image.size(), dtype=latent_image.dtype, layout=latent_image.layout, generator=generator, device="cpu")
+
+    unique_inds, inverse = np.unique(noise_inds, return_inverse=True)
+    noises = []
+    for i in range(unique_inds[-1]+1):
+        noise = noise_func([1] + list(latent_image.size())[1:], dtype=latent_image.dtype, layout=latent_image.layout, generator=generator, device="cpu")
+        if i in unique_inds:
+            noises.append(noise)
+    noises = [noises[i] for i in inverse]
+    noises = torch.cat(noises, axis=0)
+    return noises
+
+NOISE_SAMPLER_HANDLERS={
+    # Brownian is special-cased.
+    "gaussian": torch.randn_like,
+    "highres-pyramid": highres_pyramid_noise_like,
+    "pyramid": lambda x: pyramid_noise_like(x.size(), x.dtype, x.layout, None, device=x.device),
+    "perlin": rand_perlin_like,
+    "laplacian": rand_laplacian_like,
+    "uniform": uniform_noise_like,
+}
+
 
 # Below this point are extra samplers
 @torch.no_grad()
@@ -462,25 +562,8 @@ def sample_ttm_jvp(model, x, sigmas, extra_args=None, callback=None, disable=Non
 
 # Many thanks to Kat + Birch-San for this wonderful sampler implementation! https://github.com/Birch-san/sdxl-play/commits/res/
 from .other_samplers.refined_exp_solver import sample_refined_exp_s
-def sample_res_solver(model, x, sigmas, extra_args=None, callback=None, disable=None, noise_sampler=None, denoise_to_zero=True, simple_phi_calc=False, c2=0.5, ita=torch.Tensor((0.25,)), momentum=0.0):
-    sigma_min, sigma_max = sigmas[sigmas > 0].min(), sigmas.max()
-    seed = extra_args.get("seed", None)
-    match noise_sampler:
-        case "brownian":
-            noise_sampler = BrownianTreeNoiseSampler(x, sigma_min, sigma_max, seed=seed, cpu=False)
-        case "gaussian":
-            noise_sampler = lambda sigma, sigma_next: torch.randn_like(x)
-        case "uniform":
-            noise_sampler = lambda sigma, sigma_next: (torch.rand_like(x) - 0.5) * 2 * 1.73
-        case "highres-pyramid":
-            noise_sampler = lambda sigma, sigma_next: highres_pyramid_noise_like(x)
-        case "perlin":
-            noise_sampler = lambda sigma, sigma_next: rand_perlin_like(x)
-        case "laplacian":
-            noise_sampler = lambda sigma, sigma_next: rand_laplacian_like(x)
-        case _:
-            noise_sampler = lambda sigma, sigma_next: torch.randn_like(x)
-    return sample_refined_exp_s(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, noise_sampler=noise_sampler, denoise_to_zero=denoise_to_zero, simple_phi_calc=simple_phi_calc, c2=c2, ita=ita, momentum=momentum)
+def sample_res_solver(model, x, sigmas, extra_args=None, callback=None, disable=None, noise_sampler_type="gaussian", noise_sampler=None, denoise_to_zero=True, simple_phi_calc=False, c2=0.5, ita=torch.Tensor((0.25,)), momentum=0.0):
+    return sample_refined_exp_s(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, noise_sampler=noise_sampler or get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args), denoise_to_zero=denoise_to_zero, simple_phi_calc=simple_phi_calc, c2=c2, ita=ita, momentum=momentum)
 
 @torch.no_grad()
 def sample_dpmpp_dualsde_momentum(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1., s_noise=1., noise_sampler=None, r=1/2, momentum=0.0):
@@ -582,73 +665,19 @@ def sample_dpmpp_dualsde_momentum(model, x, sigmas, extra_args=None, callback=No
             h_1, h_2, h_3 = h, h_1, h_2
     return x
 
-def sample_dpmpp_dualsdemomentum(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1., s_noise=1., noise_sampler=None, r=1/2, momentum=0.0):
-    sigma_min, sigma_max = sigmas[sigmas > 0].min(), sigmas.max()
-    seed = extra_args.get("seed", None)
-    match noise_sampler:
-        case "brownian":
-            noise_sampler = BrownianTreeNoiseSampler(x, sigma_min, sigma_max, seed=seed, cpu=False)
-        case "gaussian":
-            noise_sampler = lambda sigma, sigma_next: torch.randn_like(x)
-        case "uniform":
-            noise_sampler = lambda sigma, sigma_next: (torch.rand_like(x) - 0.5) * 2 * 1.73
-        case "perlin":
-            noise_sampler = lambda sigma, sigma_next: rand_perlin_like(x)
-        case "laplacian":
-            noise_sampler = lambda sigma, sigma_next: rand_laplacian_like(x)
-        case _:
-            noise_sampler = lambda sigma, sigma_next: torch.randn_like(x)
-    return sample_dpmpp_dualsde_momentum(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta=eta, s_noise=s_noise, noise_sampler=noise_sampler, r=r, momentum=momentum)
+def sample_dpmpp_dualsdemomentum(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1., s_noise=1., noise_sampler_type="gaussian", noise_sampler=None, r=1/2, momentum=0.0):
+    return sample_dpmpp_dualsde_momentum(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta=eta, s_noise=s_noise, noise_sampler=noise_sampler or get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args), r=r, momentum=momentum)
 
 from .other_samplers.sample_ttm import sample_ttm_jvp
-def sample_ttmcustom(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1., s_noise=1., noise_sampler=None):
-    sigma_min, sigma_max = sigmas[sigmas > 0].min(), sigmas.max()
-    seed = extra_args.get("seed", None)
-    match noise_sampler:
-        case "gaussian":
-            noise_sampler = lambda sigma, sigma_next: torch.randn_like(x)
-        case "uniform":
-            noise_sampler = lambda sigma, sigma_next: (torch.rand_like(x) - 0.5) * 2 * 1.73
-        case "brownian":
-            noise_sampler = BrownianTreeNoiseSampler(x, sigma_min, sigma_max, seed=seed, cpu=False)
-        case _:
-            noise_sampler = lambda sigma, sigma_next: torch.randn_like(x)
-    return sample_ttm_jvp(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta=eta, s_noise=s_noise, noise_sampler=noise_sampler)
+def sample_ttmcustom(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1., s_noise=1., noise_sampler_type="gaussian",noise_sampler=None):
+    return sample_ttm_jvp(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta=eta, s_noise=s_noise, noise_sampler=noise_sampler or get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args))
 
 from comfy.k_diffusion.sampling import sample_lcm
-def sample_lcmcustom(model, x, sigmas, extra_args=None, callback=None, disable=None, noise_sampler=None):
-    sigma_min, sigma_max = sigmas[sigmas > 0].min(), sigmas.max()
-    seed = extra_args.get("seed", None)
-    match noise_sampler:
-        case "gaussian":
-            noise_sampler = lambda sigma, sigma_next: torch.randn_like(x)
-        case "uniform":
-            noise_sampler = lambda sigma, sigma_next: (torch.rand_like(x) - 0.5) * 2 * 1.73
-        case "brownian":
-            noise_sampler = BrownianTreeNoiseSampler(x, sigma_min, sigma_max, seed=seed, cpu=False)
-        case _:
-            noise_sampler = lambda sigma, sigma_next: torch.randn_like(x)
-    return sample_lcm(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, noise_sampler=noise_sampler)
+def sample_lcmcustom(model, x, sigmas, extra_args=None, callback=None, disable=None, noise_sampler_type="gaussian", noise_sampler=None):
+    return sample_lcm(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, noise_sampler=noise_sampler or get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args))
 
-def sample_clyb_4m_sde(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1., s_noise=1., noise_sampler="brownian", momentum=0.0):
-    sigma_min, sigma_max = sigmas[sigmas > 0].min(), sigmas.max()
-    seed = extra_args.get("seed", None)
-    match noise_sampler:
-        case "brownian":
-            noise_sampler = BrownianTreeNoiseSampler(x, sigma_min, sigma_max, seed=seed, cpu=False)
-        case "gaussian":
-            noise_sampler = lambda sigma, sigma_next: torch.randn_like(x)
-        case "uniform":
-            noise_sampler = lambda sigma, sigma_next: (torch.rand_like(x) - 0.5) * 2 * 1.73
-        case "highres-pyramid":
-            noise_sampler = lambda sigma, sigma_next: highres_pyramid_noise_like(x)
-        case "perlin":
-            noise_sampler = lambda sigma, sigma_next: rand_perlin_like(x)
-        case "laplacian":
-            noise_sampler = lambda sigma, sigma_next: rand_laplacian_like(x)
-        case _:
-            noise_sampler = lambda sigma, sigma_next: (torch.rand_like(x) - 0.5) * 2 * 1.73
-    return sample_clyb_4m_sde_momentumized(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta=eta, s_noise=s_noise, noise_sampler=noise_sampler, momentum=momentum)
+def sample_clyb_4m_sde(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1., s_noise=1., noise_sampler_type="brownian", noise_sampler=None, momentum=0.0):
+    return sample_clyb_4m_sde_momentumized(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta=eta, s_noise=s_noise, noise_sampler=noise_sampler or get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args), momentum=momentum)
 
 
 # This code works, but I'm currently experimenting with different methods
@@ -698,25 +727,8 @@ def sampler_euler_ancestral_dancing(model, x, sigmas, extra_args=None, callback=
 
     return x
 
-def sample_euler_ancestral_dancing(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1., s_noise=1., noise_sampler="gaussian", leap=2, eta_dance=1.0):
-    sigma_min, sigma_max = sigmas[sigmas > 0].min(), sigmas.max()
-    seed = extra_args.get("seed", None)
-    match noise_sampler:
-        case "brownian":
-            noise_sampler = BrownianTreeNoiseSampler(x, sigma_min, sigma_max, seed=seed, cpu=False)
-        case "gaussian":
-            noise_sampler = lambda sigma, sigma_next: torch.randn_like(x)
-        case "uniform":
-            noise_sampler = lambda sigma, sigma_next: (torch.rand_like(x) - 0.5) * 2 * 1.73
-        case "highres-pyramid":
-            noise_sampler = lambda sigma, sigma_next: highres_pyramid_noise_like(x)
-        case "perlin":
-            noise_sampler = lambda sigma, sigma_next: rand_perlin_like(x)
-        case "laplacian":
-            noise_sampler = lambda sigma, sigma_next: rand_laplacian_like(x)
-        case _:
-            noise_sampler = lambda sigma, sigma_next: (torch.rand_like(x) - 0.5) * 2 * 1.73
-    return sampler_euler_ancestral_dancing(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta=eta, s_noise=s_noise, noise_sampler=noise_sampler, leap=leap, eta_dance=eta_dance)
+def sample_euler_ancestral_dancing(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1., s_noise=1., noise_sampler_type="gaussian", noise_sampler=None, leap=2, eta_dance=1.0):
+    return sampler_euler_ancestral_dancing(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta=eta, s_noise=s_noise, noise_sampler=noise_sampler or get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args), leap=leap, eta_dance=eta_dance)
 
 
 @torch.no_grad()
@@ -778,25 +790,8 @@ def sampler_dpmpp_3m_sde_dynamic_eta(model, x, sigmas, extra_args=None, callback
         h_1, h_2 = h, h_1
     return x
 
-def sample_dpmpp_3m_sde_dynamic_eta(model, x, sigmas, extra_args=None, callback=None, disable=None, eta_max=1.0, eta_min=0.0, s_noise=1., noise_sampler="brownian"):
-    sigma_min, sigma_max = sigmas[sigmas > 0].min(), sigmas.max()
-    seed = extra_args.get("seed", None)
-    match noise_sampler:
-        case "brownian":
-            noise_sampler = BrownianTreeNoiseSampler(x, sigma_min, sigma_max, seed=seed, cpu=False)
-        case "gaussian":
-            noise_sampler = lambda sigma, sigma_next: torch.randn_like(x)
-        case "uniform":
-            noise_sampler = lambda sigma, sigma_next: (torch.rand_like(x) - 0.5) * 2 * 1.73
-        case "highres-pyramid":
-            noise_sampler = lambda sigma, sigma_next: highres_pyramid_noise_like(x)
-        case "perlin":
-            noise_sampler = lambda sigma, sigma_next: rand_perlin_like(x)
-        case "laplacian":
-            noise_sampler = lambda sigma, sigma_next: rand_laplacian_like(x)
-        case _:
-            noise_sampler = lambda sigma, sigma_next: (torch.rand_like(x) - 0.5) * 2 * 1.73
-    return sampler_dpmpp_3m_sde_dynamic_eta(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta_max=eta_max, eta_min=eta_min, s_noise=s_noise, noise_sampler=noise_sampler)
+def sample_dpmpp_3m_sde_dynamic_eta(model, x, sigmas, extra_args=None, callback=None, disable=None, eta_max=1.0, eta_min=0.0, s_noise=1., noise_sampler_type="brownian", noise_sampler=None):
+    return sampler_dpmpp_3m_sde_dynamic_eta(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta_max=eta_max, eta_min=eta_min, s_noise=s_noise, noise_sampler=noise_sampler or get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args))
 
 # Add your personal samplers below here, just for formatting purposes ;3
 
