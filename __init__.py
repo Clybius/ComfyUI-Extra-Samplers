@@ -15,6 +15,7 @@ NODE_CLASS_MAPPINGS = {
     "SamplerLCMCustom": nodes.SamplerLCMCustom,
     "SamplerEulerAncestralDancing_Experimental": nodes.SamplerEULER_ANCESTRAL_DANCING,
     "SamplerDPMPP_3M_SDE_DynETA": nodes.SamplerDPMPP_3M_SDE_DYN_ETA,
+    "SamplerSupreme": nodes.SamplerSUPREME,
     ### Schedulers
     "SimpleExponentialScheduler": nodes.SimpleExponentialScheduler,
 }

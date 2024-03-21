@@ -207,6 +207,29 @@ class SamplerDPMPP_3M_SDE_DYN_ETA:
         sampler = comfy.samplers.ksampler("dpmpp_3m_sde_dynamic_eta", {"noise_sampler": noise_sampler_type, "eta_max": eta_max, "eta_min": eta_min, "s_noise": s_noise})
         return (sampler, )
 
+class SamplerSUPREME:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required":
+                    {"noise_sampler_type": (["gaussian", "uniform", "brownian", "highres-pyramid", "perlin", "laplacian"], ),
+                     "step_method": (["euler", "dpm_1s", "dpm_2s", "dpm_3s", "rk4", "trapezoidal"], ),
+                     "eta": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step":0.01}),
+                     "centralization": ("FLOAT", {"default": 0.02, "min": -1.0, "max": 1.0, "step":0.01}),
+                     "normalization": ("FLOAT", {"default": 0.01, "min": -1.0, "max": 1.0, "step":0.01}),
+                     "edge_enhancement": ("FLOAT", {"default": 0.5, "min": -100.0, "max": 100.0, "step":0.01}),
+                     "perphist": ("FLOAT", {"default": -0.15, "min": -5.0, "max": 5.0, "step":0.01}),
+                     "s_noise": ("FLOAT", {"default": 1, "min": 0.0, "max": 100.0, "step":0.01}),
+                      }
+               }
+    RETURN_TYPES = ("SAMPLER",)
+    CATEGORY = "sampling/custom_sampling"
+
+    FUNCTION = "get_sampler"
+
+    def get_sampler(self, noise_sampler_type, step_method, eta, centralization, normalization, edge_enhancement, perphist, s_noise):
+        sampler = comfy.samplers.ksampler("supreme", {"noise_sampler": noise_sampler_type, "step_method": step_method, "eta": eta, "centralization": centralization, "normalization": normalization, "edge_enhancement": edge_enhancement, "perphist": perphist, "s_noise": s_noise})
+        return (sampler, )
+
 ### Schedulers
 from .extra_samplers import get_sigmas_simple_exponential
 class SimpleExponentialScheduler:
