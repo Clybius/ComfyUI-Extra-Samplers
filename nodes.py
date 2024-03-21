@@ -145,7 +145,7 @@ class SamplerSUPREME:
     @classmethod
     def INPUT_TYPES(s):
         return {"required":
-                    {"noise_sampler_type": (["gaussian", "uniform", "brownian", "highres-pyramid", "perlin", "laplacian"], ),
+                    {"noise_sampler_type": (get_noise_sampler_names(),),
                      "step_method": (["euler", "dpm_1s", "dpm_2s", "dpm_3s", "rk4", "trapezoidal"], ),
                      "eta": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step":0.01}),
                      "centralization": ("FLOAT", {"default": 0.02, "min": -1.0, "max": 1.0, "step":0.01}),
@@ -161,7 +161,7 @@ class SamplerSUPREME:
     FUNCTION = "get_sampler"
 
     def get_sampler(self, noise_sampler_type, step_method, eta, centralization, normalization, edge_enhancement, perphist, s_noise):
-        sampler = comfy.samplers.ksampler("supreme", {"noise_sampler": noise_sampler_type, "step_method": step_method, "eta": eta, "centralization": centralization, "normalization": normalization, "edge_enhancement": edge_enhancement, "perphist": perphist, "s_noise": s_noise})
+        sampler = comfy.samplers.ksampler("supreme", {"noise_sampler_type": noise_sampler_type, "step_method": step_method, "eta": eta, "centralization": centralization, "normalization": normalization, "edge_enhancement": edge_enhancement, "perphist": perphist, "s_noise": s_noise})
         return (sampler, )
 
 ### Schedulers
