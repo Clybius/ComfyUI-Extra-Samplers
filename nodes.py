@@ -1,83 +1,17 @@
 from .other_samplers.refined_exp_solver import sample_refined_exp_s
+from .extra_samplers import get_noise_sampler_names, prepare_noise
 import comfy.samplers
 import comfy.sample
 from comfy.k_diffusion import sampling as k_diffusion_sampling
 import latent_preview
 import torch
-import numpy as np
 from tqdm.auto import trange
-
-def pyramid_noise_like(size, dtype, layout, generator, device="cpu", discount=0.8):
-    b, c, h, w = size
-    orig_h = h
-    orig_w = w
-    noise = torch.zeros(size=size, dtype=dtype, layout=layout, device=device)
-    r = 1
-    for i in range(5):
-        r *= 2 # Rather than always going 2x,
-        #w, h = max(1, int(w/(r**i))), max(1, int(h/(r**i)))
-        noise += torch.nn.functional.interpolate((torch.normal(mean=0, std=0.5 ** i, size=(b, c, h * r, w * r), dtype=dtype, layout=layout, generator=generator, device=device)), size=(orig_h, orig_w), mode='nearest-exact') * discount**i
-        #if w>=orig_w*16 or h>=orig_h*16: break
-    return noise
-
-def power_noise_sampler(size, dtype, layout, generator, device="cpu", alpha=2, k=1): # This doesn't work properly right now
-    """Generate 1/f noise for a given tensor.
-
-    Args:
-        tensor: The tensor to add noise to.
-        alpha: The parameter that determines the slope of the spectrum.
-        k: A constant.
-
-    Returns:
-        A tensor with the same shape as `tensor` containing 1/f noise.
-    """
-    tensor = torch.randn(size=size, dtype=dtype, layout=layout, generator=generator, device=device)
-    fft = torch.fft.fft2(tensor)
-    freq = torch.arange(1, len(fft) + 1, dtype=torch.float)
-    spectral_density = k / freq**alpha
-    noise = torch.rand(size=size, dtype=dtype, layout=layout, generator=generator, device=device) * spectral_density
-    mean = torch.mean(noise, dim=(-2, -1), keepdim=True).to(tensor.device)
-    std = torch.std(noise, dim=(-2, -1), keepdim=True).to(tensor.device)
-    noise = noise.to(tensor.device).sub_(mean).div_(std)
-    return noise
-
-def prepare_noise(latent_image, seed, noise_type, noise_inds=None): # From `sample.py`
-    """
-    creates random noise given a latent image and a seed.
-    optional arg skip can be used to skip and discard x number of noise generations for a given seed
-    """
-    generator = torch.manual_seed(seed)
-    match noise_type:
-        case "gaussian":
-            noise_func = torch.randn
-        case "uniform":
-            def uniform_rand(*size, **kwargs):
-                return (torch.rand(*size, **kwargs) - 0.5) * 2 * 1.73
-            noise_func = uniform_rand
-        case "pyramid":
-            noise_func = pyramid_noise_like
-        case "power":
-            noise_func = power_noise_sampler
-        case _:
-            noise_func = torch.randn
-    if noise_inds is None:
-        return noise_func(latent_image.size(), dtype=latent_image.dtype, layout=latent_image.layout, generator=generator, device="cpu")
-
-    unique_inds, inverse = np.unique(noise_inds, return_inverse=True)
-    noises = []
-    for i in range(unique_inds[-1]+1):
-        noise = noise_func([1] + list(latent_image.size())[1:], dtype=latent_image.dtype, layout=latent_image.layout, generator=generator, device="cpu")
-        if i in unique_inds:
-            noises.append(noise)
-    noises = [noises[i] for i in inverse]
-    noises = torch.cat(noises, axis=0)
-    return noises
 
 class SamplerRES_MOMENTUMIZED:
     @classmethod
     def INPUT_TYPES(s):
         return {"required":
-                    {"noise_sampler_type": (["gaussian", "uniform", "brownian", "highres-pyramid", "perlin", "laplacian"], ),
+                    {"noise_sampler_type": (get_noise_sampler_names(), ),
                      "momentum": ("FLOAT", {"default": 0.5, "min": -1.0, "max": 1.0, "step":0.01}),
                      "denoise_to_zero": ("BOOLEAN", {"default": True}),
                      "simple_phi_calc": ("BOOLEAN", {"default": False}),
@@ -91,14 +25,14 @@ class SamplerRES_MOMENTUMIZED:
     FUNCTION = "get_sampler"
 
     def get_sampler(self, noise_sampler_type, momentum, denoise_to_zero, simple_phi_calc, ita, c2):
-        sampler = comfy.samplers.ksampler("res_momentumized", {"noise_sampler": noise_sampler_type, "denoise_to_zero": denoise_to_zero, "simple_phi_calc": simple_phi_calc, "c2": c2, "ita": torch.Tensor((ita,)), "momentum": momentum})
+        sampler = comfy.samplers.ksampler("res_momentumized", {"noise_sampler_type": noise_sampler_type, "denoise_to_zero": denoise_to_zero, "simple_phi_calc": simple_phi_calc, "c2": c2, "ita": torch.Tensor((ita,)), "momentum": momentum})
         return (sampler, )
 
 class SamplerDPMPP_DUALSDE_MOMENTUMIZED:
     @classmethod
     def INPUT_TYPES(s):
         return {"required":
-                    {"noise_sampler_type": (["gaussian", "uniform", "brownian", "perlin", "laplacian"], ),
+                    {"noise_sampler_type": (get_noise_sampler_names(), ),
                      "momentum": ("FLOAT", {"default": 0.5, "min": -1.0, "max": 1.0, "step":0.01}),
                      "eta": ("FLOAT", {"default": 1, "min": 0.0, "max": 100.0, "step":0.01}),
                      "s_noise": ("FLOAT", {"default": 1, "min": 0.0, "max": 100.0, "step":0.01}),
@@ -111,14 +45,14 @@ class SamplerDPMPP_DUALSDE_MOMENTUMIZED:
     FUNCTION = "get_sampler"
 
     def get_sampler(self, noise_sampler_type, momentum, eta, s_noise, r,):
-        sampler = comfy.samplers.ksampler("dpmpp_dualsde_momentumized", {"noise_sampler": noise_sampler_type, "eta": eta, "s_noise": s_noise, "r": r, "momentum": momentum})
+        sampler = comfy.samplers.ksampler("dpmpp_dualsde_momentumized", {"noise_sampler_type": noise_sampler_type, "eta": eta, "s_noise": s_noise, "r": r, "momentum": momentum})
         return (sampler, )
 
 class SamplerTTM:
     @classmethod
     def INPUT_TYPES(s):
         return {"required":
-                    {"noise_sampler_type": (["gaussian", "uniform", "brownian"], ),
+                    {"noise_sampler_type": (get_noise_sampler_names(), ),
                      "eta": ("FLOAT", {"default": 1, "min": 0.0, "max": 100.0, "step":0.01}),
                      "s_noise": ("FLOAT", {"default": 1, "min": 0.0, "max": 100.0, "step":0.01}),
                       }
@@ -129,7 +63,7 @@ class SamplerTTM:
     FUNCTION = "get_sampler"
 
     def get_sampler(self, noise_sampler_type, eta, s_noise):
-        sampler = comfy.samplers.ksampler("ttm", {"noise_sampler": noise_sampler_type, "eta": eta, "s_noise": s_noise})
+        sampler = comfy.samplers.ksampler("ttm", {"noise_sampler_type": noise_sampler_type, "eta": eta, "s_noise": s_noise})
         return (sampler, )
 
 
@@ -137,7 +71,7 @@ class SamplerLCMCustom:
     @classmethod
     def INPUT_TYPES(s):
         return {"required":
-                    {"noise_sampler_type": (["gaussian", "uniform", "brownian"], ),
+                    {"noise_sampler_type": (get_noise_sampler_names(), ),
                       }
                }
     RETURN_TYPES = ("SAMPLER",)
@@ -146,14 +80,14 @@ class SamplerLCMCustom:
     FUNCTION = "get_sampler"
 
     def get_sampler(self, noise_sampler_type):
-        sampler = comfy.samplers.ksampler("lcm_custom_noise", {"noise_sampler": noise_sampler_type})
+        sampler = comfy.samplers.ksampler("lcm_custom_noise", {"noise_sampler_type": noise_sampler_type})
         return (sampler, )
 
 class SamplerCLYB_4M_SDE_MOMENTUMIZED:
     @classmethod
     def INPUT_TYPES(s):
         return {"required":
-                    {"noise_sampler_type": (["gaussian", "uniform", "brownian", "highres-pyramid", "perlin", "laplacian"], ),
+                    {"noise_sampler_type": (get_noise_sampler_names(default="brownian"), ),
                      "momentum": ("FLOAT", {"default": 0.5, "min": -1.0, "max": 1.0, "step":0.01}),
                      "eta": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step":0.01}),
                      "s_noise": ("FLOAT", {"default": 1, "min": 0.0, "max": 100.0, "step":0.01}),
@@ -165,14 +99,14 @@ class SamplerCLYB_4M_SDE_MOMENTUMIZED:
     FUNCTION = "get_sampler"
 
     def get_sampler(self, noise_sampler_type, eta, s_noise, momentum):
-        sampler = comfy.samplers.ksampler("clyb_4m_sde_momentumized", {"noise_sampler": noise_sampler_type, "eta": eta, "s_noise": s_noise, "momentum": momentum})
+        sampler = comfy.samplers.ksampler("clyb_4m_sde_momentumized", {"noise_sampler_type": noise_sampler_type, "eta": eta, "s_noise": s_noise, "momentum": momentum})
         return (sampler, )
 
 class SamplerEULER_ANCESTRAL_DANCING:
     @classmethod
     def INPUT_TYPES(s):
         return {"required":
-                    {"noise_sampler_type": (["gaussian", "uniform", "brownian", "highres-pyramid", "perlin", "laplacian"], ),
+                    {"noise_sampler_type": (get_noise_sampler_names(), ),
                      "eta": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step":0.01}),
                      "eta_dance": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step":0.01}),
                      "s_noise": ("FLOAT", {"default": 1, "min": 0.0, "max": 100.0, "step":0.01}),
@@ -185,14 +119,14 @@ class SamplerEULER_ANCESTRAL_DANCING:
     FUNCTION = "get_sampler"
 
     def get_sampler(self, noise_sampler_type, eta, s_noise, leap, eta_dance):
-        sampler = comfy.samplers.ksampler("euler_ancestral_dancing", {"noise_sampler": noise_sampler_type, "eta": eta, "s_noise": s_noise, "leap": leap, "eta_dance": eta_dance})
+        sampler = comfy.samplers.ksampler("euler_ancestral_dancing", {"noise_sampler_type": noise_sampler_type, "eta": eta, "s_noise": s_noise, "leap": leap, "eta_dance": eta_dance})
         return (sampler, )
 
 class SamplerDPMPP_3M_SDE_DYN_ETA:
     @classmethod
     def INPUT_TYPES(s):
         return {"required":
-                    {"noise_sampler_type": (["gaussian", "uniform", "brownian", "highres-pyramid", "perlin", "laplacian"], ),
+                    {"noise_sampler_type": (get_noise_sampler_names(default="brownian"), ),
                      "eta_max": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step":0.01}),
                      "eta_min": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 100.0, "step":0.01}),
                      "s_noise": ("FLOAT", {"default": 1, "min": 0.0, "max": 100.0, "step":0.01}),
@@ -204,7 +138,7 @@ class SamplerDPMPP_3M_SDE_DYN_ETA:
     FUNCTION = "get_sampler"
 
     def get_sampler(self, noise_sampler_type, eta_max, eta_min, s_noise):
-        sampler = comfy.samplers.ksampler("dpmpp_3m_sde_dynamic_eta", {"noise_sampler": noise_sampler_type, "eta_max": eta_max, "eta_min": eta_min, "s_noise": s_noise})
+        sampler = comfy.samplers.ksampler("dpmpp_3m_sde_dynamic_eta", {"noise_sampler_type": noise_sampler_type, "eta_max": eta_max, "eta_min": eta_min, "s_noise": s_noise})
         return (sampler, )
 
 class SamplerSUPREME:
