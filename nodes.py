@@ -20,7 +20,7 @@ class SamplerRES_MOMENTUMIZED:
                       }
                }
     RETURN_TYPES = ("SAMPLER",)
-    CATEGORY = "sampling/custom_sampling"
+    CATEGORY = "sampling/custom_sampling/samplers"
 
     FUNCTION = "get_sampler"
 
@@ -40,7 +40,7 @@ class SamplerDPMPP_DUALSDE_MOMENTUMIZED:
                       }
                }
     RETURN_TYPES = ("SAMPLER",)
-    CATEGORY = "sampling/custom_sampling"
+    CATEGORY = "sampling/custom_sampling/samplers"
 
     FUNCTION = "get_sampler"
 
@@ -58,7 +58,7 @@ class SamplerTTM:
                       }
                }
     RETURN_TYPES = ("SAMPLER",)
-    CATEGORY = "sampling/custom_sampling"
+    CATEGORY = "sampling/custom_sampling/samplers"
 
     FUNCTION = "get_sampler"
 
@@ -75,7 +75,7 @@ class SamplerLCMCustom:
                       }
                }
     RETURN_TYPES = ("SAMPLER",)
-    CATEGORY = "sampling/custom_sampling"
+    CATEGORY = "sampling/custom_sampling/samplers"
 
     FUNCTION = "get_sampler"
 
@@ -94,7 +94,7 @@ class SamplerCLYB_4M_SDE_MOMENTUMIZED:
                       }
                }
     RETURN_TYPES = ("SAMPLER",)
-    CATEGORY = "sampling/custom_sampling"
+    CATEGORY = "sampling/custom_sampling/samplers"
 
     FUNCTION = "get_sampler"
 
@@ -114,7 +114,7 @@ class SamplerEULER_ANCESTRAL_DANCING:
                       }
                }
     RETURN_TYPES = ("SAMPLER",)
-    CATEGORY = "sampling/custom_sampling"
+    CATEGORY = "sampling/custom_sampling/samplers"
 
     FUNCTION = "get_sampler"
 
@@ -133,7 +133,7 @@ class SamplerDPMPP_3M_SDE_DYN_ETA:
                       }
                }
     RETURN_TYPES = ("SAMPLER",)
-    CATEGORY = "sampling/custom_sampling"
+    CATEGORY = "sampling/custom_sampling/samplers"
 
     FUNCTION = "get_sampler"
 
@@ -150,18 +150,19 @@ class SamplerSUPREME:
                      "eta": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step":0.01}),
                      "centralization": ("FLOAT", {"default": 0.02, "min": -1.0, "max": 1.0, "step":0.01}),
                      "normalization": ("FLOAT", {"default": 0.01, "min": -1.0, "max": 1.0, "step":0.01}),
-                     "edge_enhancement": ("FLOAT", {"default": 0.5, "min": -100.0, "max": 100.0, "step":0.01}),
-                     "perphist": ("FLOAT", {"default": -0.15, "min": -5.0, "max": 5.0, "step":0.01}),
+                     "edge_enhancement": ("FLOAT", {"default": 0.05, "min": -100.0, "max": 100.0, "step":0.01}),
+                     "perphist": ("FLOAT", {"default": 0, "min": -5.0, "max": 5.0, "step":0.01}),
+                     "substeps": ("INT", {"default": 2, "min": 1, "max": 100, "step":1}),
                      "s_noise": ("FLOAT", {"default": 1, "min": 0.0, "max": 100.0, "step":0.01}),
                       }
                }
     RETURN_TYPES = ("SAMPLER",)
-    CATEGORY = "sampling/custom_sampling"
+    CATEGORY = "sampling/custom_sampling/samplers"
 
     FUNCTION = "get_sampler"
 
-    def get_sampler(self, noise_sampler_type, step_method, eta, centralization, normalization, edge_enhancement, perphist, s_noise):
-        sampler = comfy.samplers.ksampler("supreme", {"noise_sampler_type": noise_sampler_type, "step_method": step_method, "eta": eta, "centralization": centralization, "normalization": normalization, "edge_enhancement": edge_enhancement, "perphist": perphist, "s_noise": s_noise})
+    def get_sampler(self, noise_sampler_type, step_method, eta, centralization, normalization, edge_enhancement, perphist, substeps, s_noise):
+        sampler = comfy.samplers.ksampler("supreme", {"noise_sampler_type": noise_sampler_type, "step_method": step_method, "eta": eta, "centralization": centralization, "normalization": normalization, "edge_enhancement": edge_enhancement, "perphist": perphist, "substeps": substeps, "s_noise": s_noise})
         return (sampler, )
 
 ### Schedulers
