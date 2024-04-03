@@ -795,7 +795,7 @@ def sample_dpmpp_3m_sde_dynamic_eta(model, x, sigmas, extra_args=None, callback=
     return sampler_dpmpp_3m_sde_dynamic_eta(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta_max=eta_max, eta_min=eta_min, s_noise=s_noise, noise_sampler=noise_sampler or get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args))
 
 @torch.no_grad()
-def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=None, s_noise=1., noise_sampler=None, eta=1.0, step_method="euler", centralization=0.02, normalization=0.01, edge_enhancement=0.05, perphist=0, substeps=2):
+def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=None, s_noise=1., noise_sampler=None, eta=1.0, step_method="euler", substep_method="euler", centralization=0.05, normalization=0.05, edge_enhancement=0.25, perphist=0.5, substeps=2, noise_modulation="intensity", modulation_strength=2.0):
     """
     Supreme Sampler, Euler steps. Based on no paper, purely interesting thoughts.
 
@@ -814,26 +814,31 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
         edge_enhancement: Multiplies the edges by the mean using a laplacian kernel
         perphist: Adds previous denoised variable to the current denoised using perpendicular vector projection
         substeps: Amount of times to iterate over each step and average the results
+        noise_modulation: Method of changing the noise based on situations within the sampler
+        modulation_strength: Strength of the modulation using a weighted sum between the modulation and noise sampler's noise.
     """
 
     extra_args = {} if extra_args is None else extra_args
     noise_sampler = default_noise_sampler(x) if noise_sampler is None else noise_sampler
     s_in = x.new_ones([x.shape[0]])
 
+    orig_cond_scale = extra_args["cond_scale"] if "cond_scale" in extra_args else None
+    modified_cond_scale = extra_args["cond_scale"] if "cond_scale" in extra_args else None
+
     # Centralization
-    def centralize(denoised_sample, centralization):
+    def centralize(denoised_sample, centralization, iteration):
         for b in range(len(denoised_sample)):
             for c in range(len(denoised_sample[b])):
                 channel = denoised_sample[b][c]
-                denoised_sample[b][c] -= channel.mean() * centralization
+                denoised_sample[b][c] -= channel.mean() * centralization * (sigmas[iteration] ** 0.5)
         return denoised_sample
     
     # Normalization
-    def normalize(denoised_sample, normalization):
+    def normalize(denoised_sample, normalization, iteration):
         for b in range(len(denoised_sample)):
             for c in range(len(denoised_sample[b])):
                 channel = denoised_sample[b][c]
-                denoised_sample[b][c] += ((denoised_sample[b][c] / channel.std()) - denoised_sample[b][c]) * normalization
+                denoised_sample[b][c] += ((denoised_sample[b][c] / channel.std()) - denoised_sample[b][c]) * normalization * (sigmas[iteration] ** 0.5)
         return denoised_sample
     
     # Perp-hist
@@ -852,30 +857,189 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
         eta = eta_min + 0.5 * (eta_max - eta_min) * (1 + math.cos(math.pi * progress))
         return eta
 
-    def apply_enhancements(x, i, denoised, old_denoised):
+    # Calculate steps per sigma for strength adjustment, call me YandereDev since there is for sure a more efficient way to do this. Like maybe a dict with order and stuff.
+    steps_per_sigma = 0
+    match step_method:
+        case "euler":
+            order = 1 # Where order is the amount of model calls per sigma
+            steps_per_sigma += order # Multiply 1 by the amount of substeps
+        case "dpm_1s": # DPM Family
+            order = 1
+            steps_per_sigma += order
+        case "dpm_2s":
+            order = 2
+            steps_per_sigma += order
+        case "dpm_3s":
+            order = 3
+            steps_per_sigma += order
+        case "rk4": # Fourth-order Runge-Kutta method
+            order = 4
+            steps_per_sigma += order
+        case "reversible_heun":
+            order = 2
+            steps_per_sigma += order
+        case "rkf45":
+            order = 6
+            steps_per_sigma += order
+        case "trapezoidal":
+            order = 2
+            steps_per_sigma += order
+        case "bogacki_shampine":
+            order = 3
+            steps_per_sigma += order
+        case "dynamic":
+            order = 2 # While the step method is dynamic, I've found that it will average around 2 steps per sigma moreso than 1 step.
+            steps_per_sigma += order
+        case "adaptive_rk":
+            order = 2 # While the step method is dynamic, I've found that it will average around 2 steps per sigma moreso than 1 step.
+            steps_per_sigma += order
+        case _:
+            order = 2
+            steps_per_sigma += order
+    match substep_method:
+        case "euler":
+            order = 1 # Where order is the amount of model calls per sigma
+            steps_per_sigma += order * (substeps - 1) # Multiply 1 by the amount of substeps
+        case "dpm_1s": # DPM Family
+            order = 1
+            steps_per_sigma += order * (substeps - 1)
+        case "dpm_2s":
+            order = 2
+            steps_per_sigma += order * (substeps - 1)
+        case "dpm_3s":
+            order = 3
+            steps_per_sigma += order * (substeps - 1)
+        case "rk4": # Fourth-order Runge-Kutta method
+            order = 4
+            steps_per_sigma += order * (substeps - 1)
+        case "reversible_heun":
+            order = 2
+            steps_per_sigma += order * (substeps - 1)
+        case "rkf45":
+            order = 6
+            steps_per_sigma += order * (substeps - 1)
+        case "trapezoidal":
+            order = 2
+            steps_per_sigma += order * (substeps - 1)
+        case "bogacki_shampine":
+            order = 3
+            steps_per_sigma += order * (substeps - 1)
+        case "dynamic":
+            order = 2 # While the step method is dynamic, I've found that it will average around 2 steps per sigma moreso than 1 step.
+            steps_per_sigma += order * (substeps - 1)
+        case "adaptive_rk":
+            order = 2 # While the step method is dynamic, I've found that it will average around 2 steps per sigma moreso than 1 step.
+            steps_per_sigma += order * (substeps - 1)
+        case _:
+            order = 2
+            steps_per_sigma += order * (substeps - 1)
+
+    def apply_enhancements(x, i, model, sigma_s_in, old_denoised, modified_cond_scale):
+        args = extra_args
+        args["cond_scale"] = modified_cond_scale
+        denoised = model(x, sigma_s_in, **args)
+
         if edge_enhancement != 0:
             blur = (kornia.filters.joint_bilateral_blur(x, denoised, (3, 3), 0.1, (1.5, 1.5)) - x) # Blurs non-edges
-            denoised += (kornia.filters.unsharp_mask(denoised, (3, 3), (1.5, 1.5)) - denoised) * (sigmas[i] - sigmas[i + 1]) * edge_enhancement # Sharpens everything
-            denoised += blur * (sigmas[i] - sigmas[i + 1]) * edge_enhancement # Apply blur to non-edges, thus leaving edges sharpened
+            denoised += (kornia.filters.unsharp_mask(denoised, (3, 3), (1.5, 1.5)) - denoised) * (sigmas[i] - sigmas[i + 1]) * edge_enhancement / steps_per_sigma # Sharpens everything
+            denoised += blur * (sigmas[i] - sigmas[i + 1]) * edge_enhancement / steps_per_sigma # Apply blur to non-edges, thus leaving edges sharpened
 
         if centralization != 0:
-            denoised = centralize(denoised, centralization)
+            denoised = centralize(denoised, centralization / steps_per_sigma, i)
 
         if normalization != 0:
-            denoised = normalize(denoised, normalization)
+            denoised = normalize(denoised, normalization / steps_per_sigma, i)
         
         if old_denoised != None and perphist != 0:
-            denoised = perpadd(denoised, old_denoised, x, perphist)
+            denoised = perpadd(denoised, old_denoised, x, perphist / steps_per_sigma)
 
         return denoised
 
+    # Dynamic sampling
+    dynamic_order_samplers = {
+        1: "euler",
+        2: "trapezoidal",
+        3: "bogacki_shampine",
+        4: "rk4",
+        6: "rkf45",
+    }
+    # Adaptive RK order sampling
+    adaptive_rk_weights = {
+        1: [1],
+        2: [0.5, 0.5],
+        3: [1/6, 2/3, 1/6],
+        4: [1/8, 3/8, 3/8, 1/8],
+    }
+
+    def dynamic_step_method(step_method, model, prev_x, denoised, prev_denoised, iteration, substep_iter, modified_cond_scale):
+        """
+        Step method function, applies cond-error modification, and dynamic step selection if chosen.
+        """
+        sampler = step_method
+        order = 1
+        if iteration == 0 or prev_denoised == None: # Warmup with a RKF45 step, else use substep method for substeps
+            if substep_iter > 0:
+                return substep_method, 1, modified_cond_scale
+            order = 6
+            return dynamic_order_samplers[order], order, modified_cond_scale
+
+        d = to_d(prev_x, sigmas[iteration - 1], prev_denoised)
+        x_pred = prev_x + d * (sigmas[iteration] - sigmas[iteration - 1])
+
+        d_pred = to_d(x_pred, sigmas[iteration], denoised)
+
+        error = torch.linalg.norm(d_pred - d) / torch.linalg.norm(d)
+
+        modified_cond_scale = orig_cond_scale * (1 / (1 + error))
+
+        if substep_iter > 0:
+            return substep_method, 1, modified_cond_scale
+        if step_method != "dynamic" and step_method != "adaptive_rk": # If we're not a dynamic sampler, return the step unmodified step method
+            return step_method, order, modified_cond_scale
+
+        if (error < 1e-2):
+            order = 6
+        elif (error < 3.75e-2):
+            order = 4
+        elif (error < 7.5e-2):
+            order = 3
+        elif (error < 1.5e-1):
+            order = 2
+        else:
+            order = 1
+
+        if step_method == "adaptive_rk":
+            return step_method, min(order, 4), modified_cond_scale
+        return dynamic_order_samplers[order], order, modified_cond_scale
+
     renoise_weights = torch.ones(substeps, device=x.device) / substeps
+    def intensity_based_multiplicative_noise_fn(x, noise, s_noise, sigma_up, intensity):
+        """
+        Scales noise based on the intensities of the input tensor.
+        """
+        std = torch.std(x - x.mean(), dim=1, keepdim=True)  # Average across channels to get intensity
+        scaling = (1 / (std * intensity + 1.0)) # Scale std by intensity, as not doing this leads to more noise being left over, leading to crusty/preceivably extremely oversharpened images
+        additive_noise = noise * s_noise * sigma_up
+        scaled_noise = noise * s_noise * sigma_up * scaling + additive_noise
+        
+        noise_norm = torch.norm(additive_noise)
+        scaled_noise_norm = torch.norm(scaled_noise)
+        scaled_noise *= noise_norm / scaled_noise_norm # Scale to normal noise strength
+        scaled_noise = scaled_noise * intensity + additive_noise * (1 - intensity)
+        return scaled_noise
 
     orig_model = model
     old_denoised = None
+    prev_denoised = None
+    prev_x = x
     for i in trange(len(sigmas) - 1, disable=disable):
-        def model(x, sigma_s_in, **extra_args):
-            return apply_enhancements(x, i, orig_model(x, sigma_s_in, **extra_args), old_denoised)
+        def model(x, sigma_s_in, **extra_args): # Model wrapper to apply enhancements at every call
+            nonlocal old_denoised
+            denoised = apply_enhancements(x, i, orig_model, sigma_s_in, old_denoised, modified_cond_scale)
+            old_denoised = denoised
+            if callback is not None:
+                callback({'x': z_k, 'i': i, 'sigma': sigmas[i], 'sigma_hat': sigmas[i], 'denoised': denoised})
+            return denoised
         # DynETA
         eta = eta_schedule_cosine_annealing(i, len(sigmas))
 
@@ -890,32 +1054,32 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
 
             denoised = model(z_k, sigmas[i] * s_in, **extra_args)
 
-            if callback is not None:
-                callback({'x': z_k, 'i': i, 'sigma': sigmas[i], 'sigma_hat': sigmas[i], 'denoised': denoised})
 
             eps = (z_k - denoised) / sigmas[i]
             eps_cache = {'eps': eps}
 
+            step_method_dyn, order, modified_cond_scale = dynamic_step_method(step_method, model, prev_x, denoised, prev_denoised, i, k, modified_cond_scale) #step_method, model, prev_x, denoised, prev_denoised, i, k
 
-            match step_method if sigmas[i + 1] != 0 else "euler":
-                case "euler":
+
+            match step_method_dyn if sigmas[i + 1] != 0 else "euler":
+                case "euler": # 1 model call
                     d = to_d(z_k, sigmas[i], denoised)
                     dt = sigma_down - sigmas[i]
 
                     z_k = z_k + d * dt
-                case "dpm_1s": # DPM Family
+                case "dpm_1s": # DPM Family, 1 model call
                     if callback is not None:
                         dpm_solver.info_callback = lambda info: callback({'sigma': dpm_solver.sigma(info['t']), 'sigma_hat': dpm_solver.sigma(info['t_up']), **info})
                     z_k, eps_cache = dpm_solver.dpm_solver_1_step(z_k, dpm_solver.t(sigmas[i]), dpm_solver.t(sigma_down), eps_cache=eps_cache)
-                case "dpm_2s":
+                case "dpm_2s": # 2 model calls
                     if callback is not None:
                         dpm_solver.info_callback = lambda info: callback({'sigma': dpm_solver.sigma(info['t']), 'sigma_hat': dpm_solver.sigma(info['t_up']), **info})
                     z_k, eps_cache = dpm_solver.dpm_solver_2_step(z_k, dpm_solver.t(sigmas[i]), dpm_solver.t(sigma_down), eps_cache=eps_cache)
-                case "dpm_3s":
+                case "dpm_3s": # 3 model calls
                     if callback is not None:
                         dpm_solver.info_callback = lambda info: callback({'sigma': dpm_solver.sigma(info['t']), 'sigma_hat': dpm_solver.sigma(info['t_up']), **info})
                     z_k, eps_cache = dpm_solver.dpm_solver_3_step(z_k, dpm_solver.t(sigmas[i]), dpm_solver.t(sigma_down), eps_cache=eps_cache)
-                case "rk4": # Fourth-order Runge-Kutta method
+                case "rk4": # Fourth-order Runge-Kutta method, 4 model calls
                     # Calculate the derivative using the model
                     d = to_d(z_k, sigmas[i], denoised)
                     dt = sigma_down - sigmas[i]
@@ -928,7 +1092,70 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
 
                     # Update the sample
                     z_k = z_k + (k1 + 2 * k2 + 2 * k3 + k4) / 6
-                case "trapezoidal":
+                case "reversible_heun": # 2 model calls
+                    sigma_i, sigma_i_plus_1 = sigmas[i], sigma_down
+                    dt = sigma_i_plus_1 - sigma_i
+
+                    # Calculate the derivative using the model
+                    d_i = to_d(z_k, sigma_i, denoised)
+
+                    # Predict the sample at the next sigma using Euler step
+                    x_pred = z_k + d_i * dt
+
+                    # Denoised sample at the next sigma
+                    denoised_i_plus_1 = model(x_pred, sigma_i_plus_1 * s_in, **extra_args)
+
+                    # Calculate the derivative at the next sigma
+                    d_i_plus_1 = to_d(x_pred, sigma_i_plus_1, denoised_i_plus_1)
+
+                    # Update the sample using the Reversible Heun formula
+                    z_k = z_k + dt * (d_i + d_i_plus_1) / 2 - dt**2 * (d_i_plus_1 - d_i) / 4
+                case "rkf45": # 6 model calls (expensive)
+                    sigma_i, sigma_i_plus_1 = sigmas[i], sigma_down
+                    dt = sigma_i_plus_1 - sigma_i
+                    # Calculate the derivative using the model
+                    d_i = to_d(z_k, sigmas[i], denoised)
+                    # RKF45 steps
+                    k1 = d_i * dt
+                    k2 = to_d(z_k + k1 / 4, sigmas[i] + dt / 4, model(z_k + k1 / 4, (sigmas[i] + dt / 4) * s_in, **extra_args)) * dt
+                    k3 = to_d(z_k + 3 * k1 / 32 + 9 * k2 / 32, sigmas[i] + 3 * dt / 8, model(z_k + 3 * k1 / 32 + 9 * k2 / 32, (sigmas[i] + 3 * dt / 8) * s_in, **extra_args)) * dt
+                    k4 = to_d(z_k + 1932 * k1 / 2197 - 7200 * k2 / 2197 + 7296 * k3 / 2197, sigmas[i] + 12 * dt / 13, model(z_k + 1932 * k1 / 2197 - 7200 * k2 / 2197 + 7296 * k3 / 2197, (sigmas[i] + 12 * dt / 13) * s_in, **extra_args)) * dt
+                    k5 = to_d(z_k + 439 * k1 / 216 - 8 * k2 + 3680 * k3 / 513 - 845 * k4 / 4104, sigmas[i] + dt, model(z_k + 439 * k1 / 216 - 8 * k2 + 3680 * k3 / 513 - 845 * k4 / 4104, (sigmas[i] + dt) * s_in, **extra_args)) * dt
+                    k6 = to_d(z_k - 8 * k1 / 27 + 2 * k2 - 3544 * k3 / 2565 + 1859 * k4 / 4104 - 11 * k5 / 40, sigmas[i] + dt / 2, model(z_k - 8 * k1 / 27 + 2 * k2 - 3544 * k3 / 2565 + 1859 * k4 / 4104 - 11 * k5 / 40, (sigmas[i] + dt / 2) * s_in, **extra_args)) * dt
+
+                    # Update the sample
+                    z_k = z_k + 25 * k1 / 216 + 1408 * k3 / 2565 + 2197 * k4 / 4104 - k5 / 5
+                case "adaptive_rk":
+                    sigma_i, sigma_i_plus_1 = sigmas[i], sigma_down
+                    dt = sigma_i_plus_1 - sigma_i
+
+                    # Calculate the derivative using the model
+                    d_i = to_d(z_k, sigma_i, denoised)
+
+                    # Adaptive order Runge-Kutta steps
+                    k_values = [d_i * dt]  # Initialize with k1
+                    for j in range(1, order):
+                        # Calculate intermediate k values based on the current order
+                        k_sum = sum(adaptive_rk_weights[order][l] * k_values[l] for l in range(j))
+                        k_values.append(to_d(z_k + k_sum, sigma_i + dt * sum(adaptive_rk_weights[order][:j]), model(z_k + k_sum, (sigma_i + dt * sum(adaptive_rk_weights[order][:j])) * s_in, **extra_args)) * dt)
+
+                    # Update the sample using the weighted sum of k values
+                    z_k = z_k + sum(adaptive_rk_weights[order][j] * k_values[j] for j in range(order))
+                case "bogacki_shampine":
+                    sigma_i, sigma_i_plus_1 = sigmas[i], sigma_down
+                    dt = sigma_i_plus_1 - sigma_i
+
+                    # Calculate the derivative using the model
+                    d_i = to_d(z_k, sigma_i, denoised)
+
+                    # Bogacki-Shampine steps
+                    k1 = d_i * dt
+                    k2 = to_d(z_k + k1 / 2, sigma_i + dt / 2, model(z_k + k1 / 2, (sigma_i + dt / 2) * s_in, **extra_args)) * dt
+                    k3 = to_d(z_k + 3 * k1 / 4 + k2 / 4, sigma_i + 3 * dt / 4, model(z_k + 3 * k1 / 4 + k2 / 4, (sigma_i + 3 * dt / 4) * s_in, **extra_args)) * dt
+
+                    # Update the sample
+                    z_k = z_k + 2 * k1 / 9 + k2 / 3 + 4 * k3 / 9
+                case "trapezoidal": # 2 model calls
                     if sigmas[i + 1] > 0:
                         dt = sigmas[i + 1] - sigmas[i]
 
@@ -952,17 +1179,33 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
 
             z_avg += renoise_weights[k] * z_k
             if sigmas[i + 1] > 0: # Random noise for variance on ancestral samplers
-                z_k = z_k + noise_sampler(sigmas[i], sigmas[i + 1]) * s_noise * sigma_up
+                noise_mod = noise_sampler(sigmas[i], sigmas[i + 1]) * s_noise * sigma_up
+                match noise_modulation:
+                    case "none":
+                        noise_mod = noise_sampler(sigmas[i], sigmas[i + 1]) * s_noise * sigma_up
+                    case "intensity":
+                        noise = noise_sampler(sigmas[i], sigmas[i + 1])
+                        noise_mod = intensity_based_multiplicative_noise_fn(z_k, noise, s_noise, sigma_up, modulation_strength)# * modulation_strength + noise * s_noise * sigma_up * (1.0 - modulation_strength)
+                z_k = z_k + noise_mod
 
         x = z_avg
         if sigmas[i + 1] > 0:
-            x = x + noise_sampler(sigmas[i], sigmas[i + 1]) * s_noise * sigma_up
-        old_denoised = denoised
+            noise_mod = noise_sampler(sigmas[i], sigmas[i + 1]) * s_noise * sigma_up
+            match noise_modulation:
+                case "none":
+                    noise_mod = noise_sampler(sigmas[i], sigmas[i + 1]) * s_noise * sigma_up
+                case "intensity":
+                    noise = noise_sampler(sigmas[i], sigmas[i + 1])
+                    noise_mod = intensity_based_multiplicative_noise_fn(x, noise, s_noise, sigma_up, modulation_strength)# * modulation_strength + noise * s_noise * sigma_up * (1.0 - modulation_strength)
+            x = x + noise_mod
+
+        prev_x = x
+        prev_denoised = denoised
 
     return x
 
-def sample_supreme(model, x, sigmas, extra_args=None, callback=None, disable=None, s_noise=1., noise_sampler_type="gaussian", noise_sampler=None, eta=1.0, step_method="euler", centralization=0.02, normalization=0.01, edge_enhancement=0.05, perphist=0, substeps=2):
-    return sampler_supreme(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, s_noise=s_noise, noise_sampler=noise_sampler or get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args), eta=eta, step_method=step_method, centralization=centralization, normalization=normalization, edge_enhancement=edge_enhancement, perphist=perphist, substeps=substeps)
+def sample_supreme(model, x, sigmas, extra_args=None, callback=None, disable=None, s_noise=1., noise_sampler_type="gaussian", noise_sampler=None, eta=1.0, step_method="euler", substep_method="euler", centralization=0.05, normalization=0.05, edge_enhancement=0.25, perphist=0.5, substeps=2, noise_modulation="none", modulation_strength=2.0):
+    return sampler_supreme(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, s_noise=s_noise, noise_sampler=noise_sampler or get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args), eta=eta, step_method=step_method, substep_method=substep_method, centralization=centralization, normalization=normalization, edge_enhancement=edge_enhancement, perphist=perphist, substeps=substeps, noise_modulation=noise_modulation, modulation_strength=modulation_strength)
 
 # Add your personal samplers below here, just for formatting purposes ;3
 
