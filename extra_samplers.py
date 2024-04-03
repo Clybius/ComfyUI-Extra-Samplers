@@ -1109,7 +1109,7 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
                     d_i_plus_1 = to_d(x_pred, sigma_i_plus_1, denoised_i_plus_1)
 
                     # Update the sample using the Reversible Heun formula
-                    z_k = z_k + dt * (d_i + d_i_plus_1) / 2 - dt**2 * (d_i_plus_1 - d_i) / 4
+                    z_k = z_k + dt * (d_i + d_i_plus_1) / 2 - dt**2 * (d_i_plus_1 - d_i) / 2
                 case "rkf45": # 6 model calls (expensive)
                     sigma_i, sigma_i_plus_1 = sigmas[i], sigma_down
                     dt = sigma_i_plus_1 - sigma_i
@@ -1204,7 +1204,7 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
 
     return x
 
-def sample_supreme(model, x, sigmas, extra_args=None, callback=None, disable=None, s_noise=1., noise_sampler_type="gaussian", noise_sampler=None, eta=1.0, step_method="euler", substep_method="euler", centralization=0.05, normalization=0.05, edge_enhancement=0.25, perphist=0.5, substeps=2, noise_modulation="none", modulation_strength=2.0):
+def sample_supreme(model, x, sigmas, extra_args=None, callback=None, disable=None, s_noise=1., noise_sampler_type="gaussian", noise_sampler=None, eta=1.0, step_method="euler", substep_method="euler", centralization=0.05, normalization=0.05, edge_enhancement=0.25, perphist=0.5, substeps=2, noise_modulation="intensity", modulation_strength=2.0):
     return sampler_supreme(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, s_noise=s_noise, noise_sampler=noise_sampler or get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args), eta=eta, step_method=step_method, substep_method=substep_method, centralization=centralization, normalization=normalization, edge_enhancement=edge_enhancement, perphist=perphist, substeps=substeps, noise_modulation=noise_modulation, modulation_strength=modulation_strength)
 
 # Add your personal samplers below here, just for formatting purposes ;3

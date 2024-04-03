@@ -158,7 +158,7 @@ class SamplerSUPREME:
                      "perphist": ("FLOAT", {"default": 0, "min": -5.0, "max": 5.0, "step":0.01}),
                      "substeps": ("INT", {"default": 2, "min": 1, "max": 100, "step":1}),
                      "s_noise": ("FLOAT", {"default": 1, "min": 0.0, "max": 100.0, "step":0.01}),
-                     "noise_modulation": (NOISE_MODULATION_TYPES, ),
+                     "noise_modulation": (NOISE_MODULATION_TYPES, {"default": "intensity"}),
                      "modulation_strength": ("FLOAT", {"default": 2.0, "min": 0.0, "max": 100.0, "step":0.01}),
                       }
                }
