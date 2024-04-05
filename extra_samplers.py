@@ -794,6 +794,10 @@ def sampler_dpmpp_3m_sde_dynamic_eta(model, x, sigmas, extra_args=None, callback
 def sample_dpmpp_3m_sde_dynamic_eta(model, x, sigmas, extra_args=None, callback=None, disable=None, eta_max=1.0, eta_min=0.0, s_noise=1., noise_sampler_type="brownian", noise_sampler=None):
     return sampler_dpmpp_3m_sde_dynamic_eta(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta_max=eta_max, eta_min=eta_min, s_noise=s_noise, noise_sampler=noise_sampler or get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args))
 
+
+# Default is 2, so only methods with other values are included here.
+SUPREME_ORDER = { "euler": 1, "dpm_1s": 1, "dpm_3s": 3, "rk4": 4, "reversible_heun_1s": 1, "rkf45": 6, "bogacki_shampine": 3, }
+
 @torch.no_grad()
 def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=None, s_noise=1., noise_sampler=None, eta=1.0, step_method="euler", substep_method="euler", centralization=0.05, normalization=0.05, edge_enhancement=0.25, perphist=0.5, substeps=2, noise_modulation="intensity", modulation_strength=2.0, modulation_dims=3, reversible_dampen=1.0):
     """
@@ -831,7 +835,7 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
                 channel = denoised_sample[b][c]
                 denoised_sample[b][c] -= channel.mean() * centralization * (sigmas[iteration] ** 0.5)
         return denoised_sample
-    
+
     # Normalization
     def normalize(denoised_sample, normalization, iteration):
         for b in range(len(denoised_sample)):
@@ -839,7 +843,7 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
                 channel = denoised_sample[b][c]
                 denoised_sample[b][c] += ((denoised_sample[b][c] / channel.std()) - denoised_sample[b][c]) * normalization * (sigmas[iteration] ** 0.5)
         return denoised_sample
-    
+
     # Perp-hist
     def perpadd(denoised_tensor, old_denoised_tensor, x, alpha):
         a_diff = x - (denoised_tensor - x)
@@ -848,94 +852,14 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
         b_perp = b_diff - a_ortho
         res = denoised_tensor + alpha * b_perp
         return res
-    
+
     # DynETA
     orig_eta = eta
     def dyneta_fn(original_eta, error):
         return original_eta * (1 / (1 + error))
 
-    # Calculate steps per sigma for strength adjustment, call me YandereDev since there is for sure a more efficient way to do this. Like maybe a dict with order and stuff.
-    steps_per_sigma = 0
-    match step_method:
-        case "euler":
-            order = 1 # Where order is the amount of model calls per sigma
-            steps_per_sigma += order # Multiply 1 by the amount of substeps
-        case "dpm_1s": # DPM Family
-            order = 1
-            steps_per_sigma += order
-        case "dpm_2s":
-            order = 2
-            steps_per_sigma += order
-        case "dpm_3s":
-            order = 3
-            steps_per_sigma += order
-        case "rk4": # Fourth-order Runge-Kutta method
-            order = 4
-            steps_per_sigma += order
-        case "reversible_heun":
-            order = 2
-            steps_per_sigma += order
-        case "reversible_heun_1s":
-            order = 1
-            steps_per_sigma += order
-        case "rkf45":
-            order = 6
-            steps_per_sigma += order
-        case "trapezoidal":
-            order = 2
-            steps_per_sigma += order
-        case "bogacki_shampine":
-            order = 3
-            steps_per_sigma += order
-        case "dynamic":
-            order = 2 # While the step method is dynamic, I've found that it will average around 2 steps per sigma moreso than 1 step.
-            steps_per_sigma += order
-        case "adaptive_rk":
-            order = 2 # While the step method is dynamic, I've found that it will average around 2 steps per sigma moreso than 1 step.
-            steps_per_sigma += order
-        case _:
-            order = 2
-            steps_per_sigma += order
-    match substep_method:
-        case "euler":
-            order = 1 # Where order is the amount of model calls per sigma
-            steps_per_sigma += order * (substeps - 1) # Multiply 1 by the amount of substeps
-        case "dpm_1s": # DPM Family
-            order = 1
-            steps_per_sigma += order * (substeps - 1)
-        case "dpm_2s":
-            order = 2
-            steps_per_sigma += order * (substeps - 1)
-        case "dpm_3s":
-            order = 3
-            steps_per_sigma += order * (substeps - 1)
-        case "rk4": # Fourth-order Runge-Kutta method
-            order = 4
-            steps_per_sigma += order * (substeps - 1)
-        case "reversible_heun":
-            order = 2
-            steps_per_sigma += order * (substeps - 1)
-        case "reversible_heun_1s":
-            order = 1
-            steps_per_sigma += order * (substeps - 1)
-        case "rkf45":
-            order = 6
-            steps_per_sigma += order * (substeps - 1)
-        case "trapezoidal":
-            order = 2
-            steps_per_sigma += order * (substeps - 1)
-        case "bogacki_shampine":
-            order = 3
-            steps_per_sigma += order * (substeps - 1)
-        case "dynamic":
-            order = 2 # While the step method is dynamic, I've found that it will average around 2 steps per sigma moreso than 1 step.
-            steps_per_sigma += order * (substeps - 1)
-        case "adaptive_rk":
-            order = 2 # While the step method is dynamic, I've found that it will average around 2 steps per sigma moreso than 1 step.
-            steps_per_sigma += order * (substeps - 1)
-        case _:
-            order = 2
-            steps_per_sigma += order * (substeps - 1)
+    order, sub_order = SUPREME_ORDER.get(step_method, 2), SUPREME_ORDER.get(substep_method, 2)
+    steps_per_sigma = order + sub_order * (substeps - 1)
 
     def apply_enhancements(x, i, model, sigma_s_in, old_denoised):
         args = extra_args
@@ -951,7 +875,7 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
 
         if normalization != 0:
             denoised = normalize(denoised, normalization / steps_per_sigma, i)
-        
+
         if old_denoised != None and perphist != 0:
             denoised = perpadd(denoised, old_denoised, x, perphist / steps_per_sigma)
 
@@ -1022,13 +946,13 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
         scaling = (1 / (std * abs(intensity) + 1.0)) # Scale std by intensity, as not doing this leads to more noise being left over, leading to crusty/preceivably extremely oversharpened images
         additive_noise = noise * s_noise * sigma_up
         scaled_noise = noise * s_noise * sigma_up * scaling + additive_noise
-        
+
         noise_norm = torch.norm(additive_noise)
         scaled_noise_norm = torch.norm(scaled_noise)
         scaled_noise *= noise_norm / scaled_noise_norm # Scale to normal noise strength
         scaled_noise = scaled_noise * intensity + additive_noise * (1 - intensity)
         return scaled_noise
-    
+
     def frequency_based_noise(z_k, noise, s_noise, sigma_up, intensity, channels):
         """
         Scales the high-frequency components of the noise based on the given intensity.
