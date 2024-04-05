@@ -2,6 +2,7 @@ from .other_samplers.refined_exp_solver import sample_refined_exp_s
 from .extra_samplers import get_noise_sampler_names, prepare_noise
 import comfy.samplers
 import comfy.sample
+import comfy.sampler_helpers
 from comfy.k_diffusion import sampling as k_diffusion_sampling
 import latent_preview
 import torch
@@ -203,7 +204,7 @@ class SimpleExponentialScheduler:
 from comfy import model_management
 import comfy.utils
 import comfy.conds
-from comfy.sample import prepare_sampling, cleanup_additional_models, get_models_from_cond
+from comfy.sampler_helpers import prepare_sampling, cleanup_additional_models, get_models_from_cond
 
 def mixture_sample(model, model2, noise, positive, positive2, negative, negative2, cfg, cfg2, device, device2, sampler, sampler2, sigmas, sigmas2, model_options={}, model_options2={}, latent_image=None, denoise_mask=None, denoise_mask2=None, callback=None, callback2=None, disable_pbar=False, seed=None):
     positive = positive[:]

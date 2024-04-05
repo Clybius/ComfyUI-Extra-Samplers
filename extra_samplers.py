@@ -824,9 +824,6 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
     noise_sampler = default_noise_sampler(x) if noise_sampler is None else noise_sampler
     s_in = x.new_ones([x.shape[0]])
 
-    orig_cond_scale = extra_args["cond_scale"] if "cond_scale" in extra_args else None
-    modified_cond_scale = extra_args["cond_scale"] if "cond_scale" in extra_args else None
-
     # Centralization
     def centralize(denoised_sample, centralization, iteration):
         for b in range(len(denoised_sample)):
@@ -940,9 +937,8 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
             order = 2
             steps_per_sigma += order * (substeps - 1)
 
-    def apply_enhancements(x, i, model, sigma_s_in, old_denoised, modified_cond_scale):
+    def apply_enhancements(x, i, model, sigma_s_in, old_denoised):
         args = extra_args
-        args["cond_scale"] = modified_cond_scale
         denoised = model(x, sigma_s_in, **args)
 
         if edge_enhancement != 0:
@@ -977,7 +973,7 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
         4: [1/8, 3/8, 3/8, 1/8],
     }
 
-    def dynamic_step_method(step_method, model, prev_x, denoised, prev_denoised, iteration, substep_iter, modified_cond_scale):
+    def dynamic_step_method(step_method, model, prev_x, denoised, prev_denoised, iteration, substep_iter):
         """
         Step method function, applies cond-error modification, and dynamic step selection if chosen.
         """
@@ -986,9 +982,9 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
         error = 0
         if iteration == 0 or prev_denoised == None: # Warmup with a RKF45 step, else use substep method for substeps
             if substep_iter > 0:
-                return substep_method, 1, modified_cond_scale, error
+                return substep_method, 1, error
             order = 6
-            return dynamic_order_samplers[order], order, modified_cond_scale, error
+            return dynamic_order_samplers[order], order, error
 
         d = to_d(prev_x, sigmas[iteration - 1], prev_denoised)
         x_pred = prev_x + d * (sigmas[iteration] - sigmas[iteration - 1])
@@ -997,12 +993,10 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
 
         error = torch.linalg.norm(d_pred - d) / torch.linalg.norm(d)
 
-        modified_cond_scale = orig_cond_scale * (1 / (1 + error)) if modified_cond_scale is not None else None
-
         if substep_iter > 0:
-            return substep_method, 1, modified_cond_scale, error
+            return substep_method, 1, error
         if step_method != "dynamic" and step_method != "adaptive_rk": # If we're not a dynamic sampler, return the step unmodified step method
-            return step_method, order, modified_cond_scale, error
+            return step_method, order, error
 
         if (error < 1e-2):
             order = 6
@@ -1016,8 +1010,8 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
             order = 1
 
         if step_method == "adaptive_rk":
-            return step_method, min(order, 4), modified_cond_scale, error
-        return dynamic_order_samplers[order], order, modified_cond_scale, error
+            return step_method, min(order, 4), error
+        return dynamic_order_samplers[order], order, error
 
     renoise_weights = torch.ones(substeps, device=x.device) / substeps
     def intensity_based_multiplicative_noise_fn(x, noise, s_noise, sigma_up, intensity, dims):
@@ -1092,7 +1086,7 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
     for i in trange(len(sigmas) - 1, disable=disable):
         def model(x, sigma_s_in, **extra_args): # Model wrapper to apply enhancements at every call
             nonlocal old_denoised
-            denoised = apply_enhancements(x, i, orig_model, sigma_s_in, old_denoised, modified_cond_scale)
+            denoised = apply_enhancements(x, i, orig_model, sigma_s_in, old_denoised)
             old_denoised = denoised
             if callback is not None:
                 callback({'x': z_k, 'i': i, 'sigma': sigmas[i], 'sigma_hat': sigmas[i], 'denoised': denoised})
@@ -1113,7 +1107,7 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
             eps = (z_k - denoised) / sigmas[i]
             eps_cache = {'eps': eps}
 
-            step_method_dyn, order, modified_cond_scale, error = dynamic_step_method(step_method, model, prev_x, denoised, prev_denoised, i, k, modified_cond_scale) #step_method, model, prev_x, denoised, prev_denoised, i, k
+            step_method_dyn, order, error = dynamic_step_method(step_method, model, prev_x, denoised, prev_denoised, i, k) #step_method, model, prev_x, denoised, prev_denoised, i, k
 
             # DynETA
             eta = dyneta_fn(orig_eta, error)
