@@ -795,7 +795,7 @@ def sample_dpmpp_3m_sde_dynamic_eta(model, x, sigmas, extra_args=None, callback=
     return sampler_dpmpp_3m_sde_dynamic_eta(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta_max=eta_max, eta_min=eta_min, s_noise=s_noise, noise_sampler=noise_sampler or get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args))
 
 @torch.no_grad()
-def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=None, s_noise=1., noise_sampler=None, eta=1.0, step_method="euler", substep_method="euler", centralization=0.05, normalization=0.05, edge_enhancement=0.25, perphist=0.5, substeps=2, noise_modulation="intensity", modulation_strength=2.0):
+def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=None, s_noise=1., noise_sampler=None, eta=1.0, step_method="euler", substep_method="euler", centralization=0.05, normalization=0.05, edge_enhancement=0.25, perphist=0.5, substeps=2, noise_modulation="intensity", modulation_strength=2.0, modulation_dims=3, reversible_dampen=1.0):
     """
     Supreme Sampler, Euler steps. Based on no paper, purely interesting thoughts.
 
@@ -816,6 +816,8 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
         substeps: Amount of times to iterate over each step and average the results
         noise_modulation: Method of changing the noise based on situations within the sampler
         modulation_strength: Strength of the modulation using a weighted sum between the modulation and noise sampler's noise.
+        modulation_dims: Choose between (channel) modulation, (height, width) modulation, or (channels, height, width) modulation
+        reversible_dampen: Power scalar for increasing the strength of the reversible correction dynamically, along with eta and cond modification.
     """
 
     extra_args = {} if extra_args is None else extra_args
@@ -851,11 +853,9 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
         return res
     
     # DynETA
-    def eta_schedule_cosine_annealing(i, n, eta_max=eta, eta_min=0.0):
-        """Cosine annealing schedule for eta."""
-        progress = i / (n - 1)
-        eta = eta_min + 0.5 * (eta_max - eta_min) * (1 + math.cos(math.pi * progress))
-        return eta
+    orig_eta = eta
+    def dyneta_fn(original_eta, error):
+        return original_eta * (1 / (1 + error))
 
     # Calculate steps per sigma for strength adjustment, call me YandereDev since there is for sure a more efficient way to do this. Like maybe a dict with order and stuff.
     steps_per_sigma = 0
@@ -877,6 +877,9 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
             steps_per_sigma += order
         case "reversible_heun":
             order = 2
+            steps_per_sigma += order
+        case "reversible_heun_1s":
+            order = 1
             steps_per_sigma += order
         case "rkf45":
             order = 6
@@ -914,6 +917,9 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
             steps_per_sigma += order * (substeps - 1)
         case "reversible_heun":
             order = 2
+            steps_per_sigma += order * (substeps - 1)
+        case "reversible_heun_1s":
+            order = 1
             steps_per_sigma += order * (substeps - 1)
         case "rkf45":
             order = 6
@@ -977,11 +983,12 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
         """
         sampler = step_method
         order = 1
+        error = 0
         if iteration == 0 or prev_denoised == None: # Warmup with a RKF45 step, else use substep method for substeps
             if substep_iter > 0:
-                return substep_method, 1, modified_cond_scale
+                return substep_method, 1, modified_cond_scale, error
             order = 6
-            return dynamic_order_samplers[order], order, modified_cond_scale
+            return dynamic_order_samplers[order], order, modified_cond_scale, error
 
         d = to_d(prev_x, sigmas[iteration - 1], prev_denoised)
         x_pred = prev_x + d * (sigmas[iteration] - sigmas[iteration - 1])
@@ -990,12 +997,12 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
 
         error = torch.linalg.norm(d_pred - d) / torch.linalg.norm(d)
 
-        modified_cond_scale = orig_cond_scale * (1 / (1 + error))
+        modified_cond_scale = orig_cond_scale * (1 / (1 + error)) if modified_cond_scale is not None else None
 
         if substep_iter > 0:
-            return substep_method, 1, modified_cond_scale
+            return substep_method, 1, modified_cond_scale, error
         if step_method != "dynamic" and step_method != "adaptive_rk": # If we're not a dynamic sampler, return the step unmodified step method
-            return step_method, order, modified_cond_scale
+            return step_method, order, modified_cond_scale, error
 
         if (error < 1e-2):
             order = 6
@@ -1009,16 +1016,16 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
             order = 1
 
         if step_method == "adaptive_rk":
-            return step_method, min(order, 4), modified_cond_scale
-        return dynamic_order_samplers[order], order, modified_cond_scale
+            return step_method, min(order, 4), modified_cond_scale, error
+        return dynamic_order_samplers[order], order, modified_cond_scale, error
 
     renoise_weights = torch.ones(substeps, device=x.device) / substeps
-    def intensity_based_multiplicative_noise_fn(x, noise, s_noise, sigma_up, intensity):
+    def intensity_based_multiplicative_noise_fn(x, noise, s_noise, sigma_up, intensity, dims):
         """
         Scales noise based on the intensities of the input tensor.
         """
-        std = torch.std(x - x.mean(), dim=1, keepdim=True)  # Average across channels to get intensity
-        scaling = (1 / (std * intensity + 1.0)) # Scale std by intensity, as not doing this leads to more noise being left over, leading to crusty/preceivably extremely oversharpened images
+        std = torch.std(x - x.mean(), dim=dims, keepdim=True)  # Average across channels to get intensity
+        scaling = (1 / (std * abs(intensity) + 1.0)) # Scale std by intensity, as not doing this leads to more noise being left over, leading to crusty/preceivably extremely oversharpened images
         additive_noise = noise * s_noise * sigma_up
         scaled_noise = noise * s_noise * sigma_up * scaling + additive_noise
         
@@ -1027,6 +1034,56 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
         scaled_noise *= noise_norm / scaled_noise_norm # Scale to normal noise strength
         scaled_noise = scaled_noise * intensity + additive_noise * (1 - intensity)
         return scaled_noise
+    
+    def frequency_based_noise(z_k, noise, s_noise, sigma_up, intensity, channels):
+        """
+        Scales the high-frequency components of the noise based on the given intensity.
+        """
+        additive_noise = noise * s_noise * sigma_up
+
+        std = torch.std(z_k - z_k.mean(), dim=channels, keepdim=True)  # Average across channels to get intensity
+        scaling = (1 / (std * abs(intensity) + 1.0))
+        # Perform Fast Fourier Transform (FFT)
+        z_k_freq = torch.fft.fft2(scaling * additive_noise + additive_noise)
+
+        # Get the magnitudes of the frequency components
+        magnitudes = torch.abs(z_k_freq)
+
+        # Create a high-pass filter (emphasize high frequencies)
+        h, w = z_k.shape[-2:]
+        b = abs(intensity)  # Controls the emphasis of the high pass (higher frequencies are boosted)
+        high_pass_filter = 1 - torch.exp(-((torch.arange(h)[:, None] / h)**2 + (torch.arange(w)[None, :] / w)**2) * b**2)
+        high_pass_filter = high_pass_filter.to(z_k.device)
+
+        # Apply the filter to the magnitudes
+        magnitudes_scaled = magnitudes * (1 + high_pass_filter)
+
+        # Reconstruct the complex tensor with scaled magnitudes
+        z_k_freq_scaled = magnitudes_scaled * torch.exp(1j * torch.angle(z_k_freq))
+
+        # Perform Inverse Fast Fourier Transform (IFFT)
+        z_k_scaled = torch.fft.ifft2(z_k_freq_scaled)
+
+        # Return the real part of the result
+        z_k_scaled = torch.real(z_k_scaled)
+
+        noise_norm = torch.norm(additive_noise)
+        scaled_noise_norm = torch.norm(z_k_scaled)
+
+        z_k_scaled *= (noise_norm / scaled_noise_norm) # Scale to normal noise strength
+
+        scaled_noise = z_k_scaled * intensity + additive_noise * (1 - intensity)
+
+        return scaled_noise
+
+    dims = (-3, -2, -1)
+    match modulation_dims:
+        case 1:
+            dims = (-3)
+        case 2:
+            dims = (-2, -1)
+        case 3:
+            dims = (-3, -2, -1)
 
     orig_model = model
     old_denoised = None
@@ -1040,8 +1097,6 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
             if callback is not None:
                 callback({'x': z_k, 'i': i, 'sigma': sigmas[i], 'sigma_hat': sigmas[i], 'denoised': denoised})
             return denoised
-        # DynETA
-        eta = eta_schedule_cosine_annealing(i, len(sigmas))
 
         dpm_solver = DPMSolver(model, extra_args)
 
@@ -1058,8 +1113,10 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
             eps = (z_k - denoised) / sigmas[i]
             eps_cache = {'eps': eps}
 
-            step_method_dyn, order, modified_cond_scale = dynamic_step_method(step_method, model, prev_x, denoised, prev_denoised, i, k, modified_cond_scale) #step_method, model, prev_x, denoised, prev_denoised, i, k
+            step_method_dyn, order, modified_cond_scale, error = dynamic_step_method(step_method, model, prev_x, denoised, prev_denoised, i, k, modified_cond_scale) #step_method, model, prev_x, denoised, prev_denoised, i, k
 
+            # DynETA
+            eta = dyneta_fn(orig_eta, error)
 
             match step_method_dyn if sigmas[i + 1] != 0 else "euler":
                 case "euler": # 1 model call
@@ -1095,6 +1152,7 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
                 case "reversible_heun": # 2 model calls
                     sigma_i, sigma_i_plus_1 = sigmas[i], sigma_down
                     dt = sigma_i_plus_1 - sigma_i
+                    dt_nonancestral = sigmas[i + 1] - sigma_i
 
                     # Calculate the derivative using the model
                     d_i = to_d(z_k, sigma_i, denoised)
@@ -1109,7 +1167,24 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
                     d_i_plus_1 = to_d(x_pred, sigma_i_plus_1, denoised_i_plus_1)
 
                     # Update the sample using the Reversible Heun formula
-                    z_k = z_k + dt * (d_i + d_i_plus_1) / 2 - dt**2 * (d_i_plus_1 - d_i) / 2
+                    z_k = z_k + dt * (d_i + d_i_plus_1) / 2 - dt_nonancestral**2 * (d_i_plus_1 - d_i) / (4 * reversible_dampen)
+                case "reversible_heun_1s": # Experimental 1 model call variant, utilizing previous denoised variables to speed up diffusion.
+                    # Reversible Heun-inspired update (first-order)
+                    sigma_i, sigma_i_plus_1 = sigmas[i], sigma_down
+                    dt = sigma_i_plus_1 - sigma_i
+                    dt_nonancestral = sigmas[i + 1] - sigma_i
+
+                    # Calculate the derivative using the model
+                    d_i_old = to_d(prev_x, sigma_i, prev_denoised)
+
+                    # Predict the sample at the next sigma using Euler step
+                    x_pred = prev_x + d_i_old * dt
+
+                    # Calculate the derivative at the next sigma
+                    d_i_plus_1 = to_d(x_pred, sigma_i_plus_1, denoised)
+
+                    # Update the sample using the Reversible Heun formula
+                    z_k = z_k + dt * (d_i_old + d_i_plus_1) / 2 - dt_nonancestral**2 * (d_i_plus_1 - d_i_old) / (1 * reversible_dampen)
                 case "rkf45": # 6 model calls (expensive)
                     sigma_i, sigma_i_plus_1 = sigmas[i], sigma_down
                     dt = sigma_i_plus_1 - sigma_i
@@ -1121,7 +1196,6 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
                     k3 = to_d(z_k + 3 * k1 / 32 + 9 * k2 / 32, sigmas[i] + 3 * dt / 8, model(z_k + 3 * k1 / 32 + 9 * k2 / 32, (sigmas[i] + 3 * dt / 8) * s_in, **extra_args)) * dt
                     k4 = to_d(z_k + 1932 * k1 / 2197 - 7200 * k2 / 2197 + 7296 * k3 / 2197, sigmas[i] + 12 * dt / 13, model(z_k + 1932 * k1 / 2197 - 7200 * k2 / 2197 + 7296 * k3 / 2197, (sigmas[i] + 12 * dt / 13) * s_in, **extra_args)) * dt
                     k5 = to_d(z_k + 439 * k1 / 216 - 8 * k2 + 3680 * k3 / 513 - 845 * k4 / 4104, sigmas[i] + dt, model(z_k + 439 * k1 / 216 - 8 * k2 + 3680 * k3 / 513 - 845 * k4 / 4104, (sigmas[i] + dt) * s_in, **extra_args)) * dt
-                    k6 = to_d(z_k - 8 * k1 / 27 + 2 * k2 - 3544 * k3 / 2565 + 1859 * k4 / 4104 - 11 * k5 / 40, sigmas[i] + dt / 2, model(z_k - 8 * k1 / 27 + 2 * k2 - 3544 * k3 / 2565 + 1859 * k4 / 4104 - 11 * k5 / 40, (sigmas[i] + dt / 2) * s_in, **extra_args)) * dt
 
                     # Update the sample
                     z_k = z_k + 25 * k1 / 216 + 1408 * k3 / 2565 + 2197 * k4 / 4104 - k5 / 5
@@ -1155,6 +1229,24 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
 
                     # Update the sample
                     z_k = z_k + 2 * k1 / 9 + k2 / 3 + 4 * k3 / 9
+                case "reversible_bogacki_shampine":
+                    sigma_i, sigma_i_plus_1 = sigmas[i], sigma_down
+                    dt = sigma_i_plus_1 - sigma_i
+                    dt_nonancestral = sigmas[i + 1] - sigma_i
+
+                    # Calculate the derivative using the model
+                    d_i = to_d(z_k, sigma_i, denoised)
+
+                    # Bogacki-Shampine steps
+                    k1 = d_i * dt
+                    k2 = to_d(z_k + k1 / 2, sigma_i + dt / 2, model(z_k + k1 / 2, (sigma_i + dt / 2) * s_in, **extra_args)) * dt
+                    k3 = to_d(z_k + 3 * k1 / 4 + k2 / 4, sigma_i + 3 * dt / 4, model(z_k + 3 * k1 / 4 + k2 / 4, (sigma_i + 3 * dt / 4) * s_in, **extra_args)) * dt
+
+                    # Reversible correction term (inspired by Reversible Heun)
+                    correction = dt_nonancestral**2 * (4 * k3 / 9 - k2 / 3) / (6 * reversible_dampen)
+
+                    # Update the sample
+                    z_k = z_k + 2 * k1 / 9 + k2 / 3 + 4 * k3 / 9 - correction
                 case "trapezoidal": # 2 model calls
                     if sigmas[i + 1] > 0:
                         dt = sigmas[i + 1] - sigmas[i]
@@ -1185,7 +1277,10 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
                         noise_mod = noise_sampler(sigmas[i], sigmas[i + 1]) * s_noise * sigma_up
                     case "intensity":
                         noise = noise_sampler(sigmas[i], sigmas[i + 1])
-                        noise_mod = intensity_based_multiplicative_noise_fn(z_k, noise, s_noise, sigma_up, modulation_strength)# * modulation_strength + noise * s_noise * sigma_up * (1.0 - modulation_strength)
+                        noise_mod = intensity_based_multiplicative_noise_fn(z_k, noise, s_noise, sigma_up, modulation_strength, dims)
+                    case "frequency":
+                        noise = noise_sampler(sigmas[i], sigmas[i + 1])
+                        noise_mod = frequency_based_noise(z_k, noise, s_noise, sigma_up, modulation_strength, dims)
                 z_k = z_k + noise_mod
 
         x = z_avg
@@ -1196,7 +1291,11 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
                     noise_mod = noise_sampler(sigmas[i], sigmas[i + 1]) * s_noise * sigma_up
                 case "intensity":
                     noise = noise_sampler(sigmas[i], sigmas[i + 1])
-                    noise_mod = intensity_based_multiplicative_noise_fn(x, noise, s_noise, sigma_up, modulation_strength)# * modulation_strength + noise * s_noise * sigma_up * (1.0 - modulation_strength)
+                    noise_mod = intensity_based_multiplicative_noise_fn(x, noise, s_noise, sigma_up, modulation_strength, dims)
+                case "frequency":
+                    noise = noise_sampler(sigmas[i], sigmas[i + 1])
+                    noise_mod = frequency_based_noise(x, noise, s_noise, sigma_up, modulation_strength, dims)
+
             x = x + noise_mod
 
         prev_x = x
@@ -1204,8 +1303,8 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
 
     return x
 
-def sample_supreme(model, x, sigmas, extra_args=None, callback=None, disable=None, s_noise=1., noise_sampler_type="gaussian", noise_sampler=None, eta=1.0, step_method="euler", substep_method="euler", centralization=0.05, normalization=0.05, edge_enhancement=0.25, perphist=0.5, substeps=2, noise_modulation="intensity", modulation_strength=2.0):
-    return sampler_supreme(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, s_noise=s_noise, noise_sampler=noise_sampler or get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args), eta=eta, step_method=step_method, substep_method=substep_method, centralization=centralization, normalization=normalization, edge_enhancement=edge_enhancement, perphist=perphist, substeps=substeps, noise_modulation=noise_modulation, modulation_strength=modulation_strength)
+def sample_supreme(model, x, sigmas, extra_args=None, callback=None, disable=None, s_noise=1., noise_sampler_type="gaussian", noise_sampler=None, eta=1.0, step_method="euler", substep_method="euler", centralization=0.05, normalization=0.05, edge_enhancement=0.25, perphist=0.5, substeps=2, noise_modulation="intensity", modulation_strength=2.0, modulation_dims=3, reversible_dampen=1.0):
+    return sampler_supreme(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, s_noise=s_noise, noise_sampler=noise_sampler or get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args), eta=eta, step_method=step_method, substep_method=substep_method, centralization=centralization, normalization=normalization, edge_enhancement=edge_enhancement, perphist=perphist, substeps=substeps, noise_modulation=noise_modulation, modulation_strength=modulation_strength, modulation_dims=modulation_dims, reversible_dampen=reversible_dampen)
 
 # Add your personal samplers below here, just for formatting purposes ;3
 

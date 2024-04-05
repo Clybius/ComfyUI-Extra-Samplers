@@ -144,9 +144,9 @@ class SamplerDPMPP_3M_SDE_DYN_ETA:
 class SamplerSUPREME:
     @classmethod
     def INPUT_TYPES(s):
-        SUBSTEP_METHODS=["euler", "dpm_1s", "dpm_2s", "dpm_3s", "bogacki_shampine", "rk4", "rkf45", "reversible_heun", "trapezoidal"]
+        SUBSTEP_METHODS=["euler", "dpm_1s", "dpm_2s", "dpm_3s", "bogacki_shampine", "rk4", "rkf45", "reversible_heun", "reversible_heun_1s", "reversible_bogacki_shampine", "trapezoidal"]
         STEP_METHODS=SUBSTEP_METHODS+["dynamic", "adaptive_rk"]
-        NOISE_MODULATION_TYPES=["none", "intensity"]
+        NOISE_MODULATION_TYPES=["none", "intensity", "frequency"]
         return {"required":
                     {"noise_sampler_type": (get_noise_sampler_names(),),
                      "step_method": (STEP_METHODS, ),
@@ -159,7 +159,9 @@ class SamplerSUPREME:
                      "substeps": ("INT", {"default": 2, "min": 1, "max": 100, "step":1}),
                      "s_noise": ("FLOAT", {"default": 1, "min": 0.0, "max": 100.0, "step":0.01}),
                      "noise_modulation": (NOISE_MODULATION_TYPES, {"default": "intensity"}),
-                     "modulation_strength": ("FLOAT", {"default": 2.0, "min": 0.0, "max": 100.0, "step":0.01}),
+                     "modulation_strength": ("FLOAT", {"default": 2.0, "min": -100.0, "max": 100.0, "step":0.01}),
+                     "modulation_dims": ("INT", {"default": 3, "min": 1, "max": 3, "step":1}),
+                     "reversible_dampen": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step":0.01}),
                       }
                }
     RETURN_TYPES = ("SAMPLER",)
@@ -167,8 +169,8 @@ class SamplerSUPREME:
 
     FUNCTION = "get_sampler"
 
-    def get_sampler(self, noise_sampler_type, step_method, substep_method, eta, centralization, normalization, edge_enhancement, perphist, substeps, noise_modulation, modulation_strength, s_noise):
-        sampler = comfy.samplers.ksampler("supreme", {"noise_sampler_type": noise_sampler_type, "step_method": step_method, "eta": eta, "centralization": centralization, "normalization": normalization, "edge_enhancement": edge_enhancement, "perphist": perphist, "substeps": substeps, "substep_method": substep_method, "noise_modulation": noise_modulation, "modulation_strength": modulation_strength, "s_noise": s_noise})
+    def get_sampler(self, noise_sampler_type, step_method, substep_method, eta, centralization, normalization, edge_enhancement, perphist, substeps, noise_modulation, modulation_strength, modulation_dims, reversible_dampen, s_noise):
+        sampler = comfy.samplers.ksampler("supreme", {"noise_sampler_type": noise_sampler_type, "step_method": step_method, "eta": eta, "centralization": centralization, "normalization": normalization, "edge_enhancement": edge_enhancement, "perphist": perphist, "substeps": substeps, "substep_method": substep_method, "noise_modulation": noise_modulation, "modulation_strength": modulation_strength, "modulation_dims": modulation_dims, "reversible_dampen": reversible_dampen, "s_noise": s_noise})
         return (sampler, )
 
 ### Schedulers
