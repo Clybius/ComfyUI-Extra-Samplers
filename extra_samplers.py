@@ -1146,7 +1146,6 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
                 case "reversible_heun": # 2 model calls
                     sigma_i, sigma_i_plus_1 = sigmas[i], sigma_down
                     dt = sigma_i_plus_1 - sigma_i
-                    dt_nonancestral = sigmas[i + 1] - sigma_i
 
                     # Calculate the derivative using the model
                     d_i = to_d(z_k, sigma_i, denoised)
@@ -1161,15 +1160,14 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
                     d_i_plus_1 = to_d(x_pred, sigma_i_plus_1, denoised_i_plus_1)
 
                     # Update the sample using the Reversible Heun formula
-                    z_k = z_k + dt * (d_i + d_i_plus_1) / 2 - dt_nonancestral**2 * (d_i_plus_1 - d_i) / (4 * reversible_dampen)
+                    z_k = z_k + dt * (d_i + d_i_plus_1) / 2 - dt**2 * (d_i_plus_1 - d_i) / (4 * reversible_dampen)
                 case "reversible_heun_1s": # Experimental 1 model call variant, utilizing previous denoised variables to speed up diffusion.
                     # Reversible Heun-inspired update (first-order)
                     sigma_i, sigma_i_plus_1 = sigmas[i], sigma_down
                     dt = sigma_i_plus_1 - sigma_i
-                    dt_nonancestral = sigmas[i + 1] - sigma_i
 
                     # Calculate the derivative using the model
-                    d_i_old = to_d(prev_x, sigma_i, prev_denoised)
+                    d_i_old = to_d(prev_x, sigma_i, prev_denoised) if prev_denoised is not None else to_d(prev_x, sigma_i, model(prev_x, sigma_i * s_in, **extra_args))
 
                     # Predict the sample at the next sigma using Euler step
                     x_pred = prev_x + d_i_old * dt
@@ -1178,7 +1176,7 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
                     d_i_plus_1 = to_d(x_pred, sigma_i_plus_1, denoised)
 
                     # Update the sample using the Reversible Heun formula
-                    z_k = z_k + dt * (d_i_old + d_i_plus_1) / 2 - dt_nonancestral**2 * (d_i_plus_1 - d_i_old) / (1 * reversible_dampen)
+                    z_k = z_k + dt * (d_i_old + d_i_plus_1) / 2 - dt**2 * (d_i_plus_1 - d_i_old) / (2 * reversible_dampen)
                 case "rkf45": # 6 model calls (expensive)
                     sigma_i, sigma_i_plus_1 = sigmas[i], sigma_down
                     dt = sigma_i_plus_1 - sigma_i
@@ -1226,7 +1224,6 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
                 case "reversible_bogacki_shampine":
                     sigma_i, sigma_i_plus_1 = sigmas[i], sigma_down
                     dt = sigma_i_plus_1 - sigma_i
-                    dt_nonancestral = sigmas[i + 1] - sigma_i
 
                     # Calculate the derivative using the model
                     d_i = to_d(z_k, sigma_i, denoised)
@@ -1237,7 +1234,7 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
                     k3 = to_d(z_k + 3 * k1 / 4 + k2 / 4, sigma_i + 3 * dt / 4, model(z_k + 3 * k1 / 4 + k2 / 4, (sigma_i + 3 * dt / 4) * s_in, **extra_args)) * dt
 
                     # Reversible correction term (inspired by Reversible Heun)
-                    correction = dt_nonancestral**2 * (4 * k3 / 9 - k2 / 3) / (6 * reversible_dampen)
+                    correction = dt**2 * (4 * k3 / 9 - k2 / 3) / (6 * reversible_dampen)
 
                     # Update the sample
                     z_k = z_k + 2 * k1 / 9 + k2 / 3 + 4 * k3 / 9 - correction
