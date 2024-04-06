@@ -507,3 +507,148 @@ class SamplerCustomModelMixtureDuo:
         else:
             out_denoised = out
         return (out, out_denoised)
+
+class Guider_GeometricCFG(comfy.samplers.CFGGuider):
+    def set_cfg(self, cfg1, geometric_alpha):
+        self.cfg1 = cfg1
+        self.alpha = geometric_alpha
+
+    def set_conds(self, positive, positive2, negative):
+        self.inner_set_conds({"positive": positive, "positive2": positive2, "negative": negative})
+
+    def predict_noise(self, x, timestep, model_options={}, seed=None):
+        negative_cond = self.conds.get("negative", None)
+        positive_cond = self.conds.get("positive", None)
+        positive2_cond = self.conds.get("positive2", None)
+
+        out = comfy.samplers.calc_cond_batch(self.inner_model, [negative_cond, positive2_cond, positive_cond], x, timestep, model_options) # negative, positive2, positive
+
+        a = torch.complex(out[2], torch.zeros_like(out[2]))
+        b = torch.complex(out[1], torch.zeros_like(out[1]))
+        res = a ** (1 - self.alpha) * b ** self.alpha
+        res = res.real
+
+        return comfy.samplers.cfg_function(self.inner_model, res, out[0], self.cfg1, x, timestep, model_options=model_options, cond=positive_cond, uncond=negative_cond)
+
+class GeometricCFGGuider:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required":
+                    {"model": ("MODEL",),
+                    "cond1": ("CONDITIONING", ),
+                    "cond2": ("CONDITIONING", ),
+                    "negative": ("CONDITIONING", ),
+                    "cfg": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0, "step":0.1, "round": 0.01}),
+                    "geometric_alpha": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step":0.01, "round": 0.01}),
+                     }
+                }
+
+    RETURN_TYPES = ("GUIDER",)
+
+    FUNCTION = "get_guider"
+    CATEGORY = "sampling/custom_sampling/guiders"
+
+    def get_guider(self, model, cond1, cond2, negative, cfg, geometric_alpha):
+        guider = Guider_GeometricCFG(model)
+        guider.set_conds(cond1, cond2, negative) # Conds
+        guider.set_cfg(cfg, geometric_alpha) # Strengths
+        return (guider,)
+
+class Guider_ImageGuidedCFG(comfy.samplers.CFGGuider):
+    def set_cfg(self, model, cfg1, image_cfg, latent_img):
+        self.cfg1 = cfg1
+        self.icfg = image_cfg
+        self.img = latent_img
+        self.model = model
+
+    def set_conds(self, positive, negative):
+        self.inner_set_conds({"positive": positive, "negative": negative})
+
+    def predict_noise(self, x, timestep, model_options={}, seed=None):
+        negative_cond = self.conds.get("negative", None)
+        positive_cond = self.conds.get("positive", None)
+
+        out = comfy.samplers.calc_cond_batch(self.inner_model, [negative_cond, positive_cond], x, timestep, model_options)
+
+        img = self.img["samples"].to(out[1].device)
+        
+        norm_out1 = torch.linalg.norm(out[1]) # Get norm of positive cond
+
+        res = img - out[1] * (out[1] / norm_out1 * (img / norm_out1)).sum() # Project positive cond onto image
+        res *= torch.linalg.norm(out[1]) / torch.linalg.norm(res) # Normalize to cond
+        res = self.model.model.model_sampling.calculate_denoised(timestep, res, out[1])
+
+        cfg = comfy.samplers.cfg_function(self.inner_model, out[1], out[0], self.cfg1, x, timestep, model_options=model_options, cond=positive_cond, uncond=negative_cond)
+
+        return cfg + (cfg - res) * self.icfg / self.cfg1 / 10 # Divide by 10 to mimic user-cfg. Do CFG - Res since the image is inverted the other way around.
+
+class ImageGuidedCFGGuider:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required":
+                    {"model": ("MODEL",),
+                    "positive": ("CONDITIONING", ),
+                    "negative": ("CONDITIONING", ),
+                    "cfg": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0, "step":0.1, "round": 0.01}),
+                    "image_cfg": ("FLOAT", {"default": 0.1, "min": -100.0, "max": 100.0, "step":0.1, "round": 0.01}),
+                    "latent_image": ("LATENT", ),
+                     }
+                }
+
+    RETURN_TYPES = ("GUIDER",)
+
+    FUNCTION = "get_guider"
+    CATEGORY = "sampling/custom_sampling/guiders"
+
+    def get_guider(self, model, positive, negative, cfg, image_cfg, latent_image):
+        guider = Guider_ImageGuidedCFG(model)
+        guider.set_conds(positive, negative) # Conds
+        guider.set_cfg(model, cfg, image_cfg, latent_image) # Strengths
+        return (guider,)
+
+class Guider_ScaledCFG(comfy.samplers.CFGGuider):
+    def set_cfg(self, cfg1, cond2_alpha):
+        self.cfg1 = cfg1
+        self.alpha = cond2_alpha
+
+    def set_conds(self, positive, positive2, negative):
+        self.inner_set_conds({"positive": positive, "positive2": positive2, "negative": negative})
+
+    def predict_noise(self, x, timestep, model_options={}, seed=None):
+        negative_cond = self.conds.get("negative", None)
+        positive_cond = self.conds.get("positive", None)
+        positive2_cond = self.conds.get("positive2", None)
+
+        out = comfy.samplers.calc_cond_batch(self.inner_model, [negative_cond, positive2_cond, positive_cond], x, timestep, model_options) # negative, positive2, positive
+
+        threshold = torch.maximum(torch.abs(out[2] - out[0]), torch.abs(out[1] - out[0]))
+        dissimilarity = torch.clamp(torch.nan_to_num((out[0] - out[2]) * (out[1] - out[0]) / threshold**2, nan=0), 0)
+
+        res = out[2] + (out[1] - out[0]) * self.alpha * dissimilarity
+
+        cfg = comfy.samplers.cfg_function(self.inner_model, res, out[0], self.cfg1, x, timestep, model_options=model_options, cond=positive_cond, uncond=negative_cond)
+        return cfg
+
+class ScaledCFGGuider:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required":
+                    {"model": ("MODEL",),
+                    "cond1": ("CONDITIONING", ),
+                    "cond2": ("CONDITIONING", ),
+                    "negative": ("CONDITIONING", ),
+                    "cfg": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0, "step":0.1, "round": 0.01}),
+                    "cond2_alpha": ("FLOAT", {"default": 1.0, "min": -1.0, "max": 1.0, "step":0.01, "round": 0.01}),
+                     }
+                }
+
+    RETURN_TYPES = ("GUIDER",)
+
+    FUNCTION = "get_guider"
+    CATEGORY = "sampling/custom_sampling/guiders"
+
+    def get_guider(self, model, cond1, cond2, negative, cfg, cond2_alpha):
+        guider = Guider_GeometricCFG(model)
+        guider.set_conds(cond1, cond2, negative) # Conds
+        guider.set_cfg(cfg, cond2_alpha) # Strengths
+        return (guider,)

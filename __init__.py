@@ -5,9 +5,15 @@ extra_samplers.add_samplers()
 #extra_samplers.add_schedulers()
 
 NODE_CLASS_MAPPINGS = {
+    ## K-Samplers
     "SamplerCustomNoise": nodes.SamplerCustomNoise,
     "SamplerCustomNoiseDuo": nodes.SamplerCustomNoiseDuo,
     "SamplerCustomModelMixtureDuo": nodes.SamplerCustomModelMixtureDuo,
+    # Guiders
+    "GeometricCFGGuider": nodes.GeometricCFGGuider,
+    "ImageAssistedCFGGuider": nodes.ImageGuidedCFGGuider,
+    "ScaledCFGGuider": nodes.ScaledCFGGuider,
+    ## Samplers
     "SamplerRES_Momentumized": nodes.SamplerRES_MOMENTUMIZED,
     "SamplerDPMPP_DualSDE_Momentumized": nodes.SamplerDPMPP_DUALSDE_MOMENTUMIZED,
     "SamplerCLYB_4M_SDE_Momentumized": nodes.SamplerCLYB_4M_SDE_MOMENTUMIZED,
