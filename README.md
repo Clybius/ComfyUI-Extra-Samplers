@@ -14,6 +14,10 @@
 * SamplerCustomNoiseDuo (Same as above, but with an added High-res fix for simplicity.)
 * SamplerCustomModelMixtureDuo (Samples with custom noises, and switches between model1 and model2 every step. If you encounter vram errors, try adding/removing `--disable-smart-memory` when launching ComfyUI)
 
+### Currently included extra Guider nodes:
+* GeometricCFGGuider: Samples the two conditionings, then blends between them using a user-chosen alpha.
+* ScaledCFGGuider: Samples the two conditionings, then adds it using a method similar to "Add Trained Difference" from merging models.
+* ImageAssistedCFGGuider: Samples the conditioning, then adds in the latent image using vector projection onto the CFG. Image latent ought to be of the same size as the diffusion latent.
 
 #### Supreme Sampler features:
 * step_method: You have the ability to choose your own step method with this sampler! Optionally, there's a dynamic step method, which chooses the appropriate order based on the calculated error between steps, allowing you to obtain higher quality when it matters in the sampling process. Defaults to **(Euler)**.
