@@ -555,10 +555,11 @@ class GeometricCFGGuider:
         return (guider,)
 
 class Guider_ImageGuidedCFG(comfy.samplers.CFGGuider):
-    def set_cfg(self, model, cfg1, image_cfg, latent_img):
+    def set_cfg(self, model, cfg1, image_cfg, latent_img, img_weighting):
         self.cfg1 = cfg1
         self.icfg = image_cfg
         self.img = latent_img
+        self.img_weighting = img_weighting
         self.model = model
 
     def set_conds(self, positive, negative):
@@ -571,16 +572,23 @@ class Guider_ImageGuidedCFG(comfy.samplers.CFGGuider):
         out = comfy.samplers.calc_cond_batch(self.inner_model, [negative_cond, positive_cond], x, timestep, model_options)
 
         img = self.img["samples"].to(out[1].device)
-        
+
         norm_out1 = torch.linalg.norm(out[1]) # Get norm of positive cond
 
         res = img - out[1] * (out[1] / norm_out1 * (img / norm_out1)).sum() # Project positive cond onto image
         res *= torch.linalg.norm(out[1]) / torch.linalg.norm(res) # Normalize to cond
         res = self.model.model.model_sampling.calculate_denoised(timestep, res, out[1])
 
+        weight = 1.0 # Flat by default
+        match self.img_weighting:
+            case "flat":
+                weight = 1.0
+            case "linear down":
+                weight = (self.model.model.model_sampling.timestep(timestep) / 999.0)[:, None, None, None].clone()
+
         cfg = comfy.samplers.cfg_function(self.inner_model, out[1], out[0], self.cfg1, x, timestep, model_options=model_options, cond=positive_cond, uncond=negative_cond)
 
-        return cfg + (cfg - res) * self.icfg / self.cfg1 / 10 # Divide by 10 to mimic user-cfg. Do CFG - Res since the image is inverted the other way around.
+        return cfg + (cfg - res) * self.icfg / self.cfg1 / 10 * weight # Divide by 10 to mimic user-cfg. Do CFG - Res since the image is inverted the other way around.
 
 class ImageGuidedCFGGuider:
     @classmethod
@@ -591,6 +599,7 @@ class ImageGuidedCFGGuider:
                     "negative": ("CONDITIONING", ),
                     "cfg": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0, "step":0.1, "round": 0.01}),
                     "image_cfg": ("FLOAT", {"default": 0.1, "min": -100.0, "max": 100.0, "step":0.1, "round": 0.01}),
+                    "image_weighting": (["flat", "linear down"], ),
                     "latent_image": ("LATENT", ),
                      }
                 }
@@ -600,10 +609,10 @@ class ImageGuidedCFGGuider:
     FUNCTION = "get_guider"
     CATEGORY = "sampling/custom_sampling/guiders"
 
-    def get_guider(self, model, positive, negative, cfg, image_cfg, latent_image):
+    def get_guider(self, model, positive, negative, cfg, image_cfg, image_weighting, latent_image):
         guider = Guider_ImageGuidedCFG(model)
         guider.set_conds(positive, negative) # Conds
-        guider.set_cfg(model, cfg, image_cfg, latent_image) # Strengths
+        guider.set_cfg(model, cfg, image_cfg, latent_image, image_weighting) # Strengths
         return (guider,)
 
 class Guider_ScaledCFG(comfy.samplers.CFGGuider):
