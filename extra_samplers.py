@@ -1223,6 +1223,7 @@ def sample_supreme(model, x, sigmas, extra_args=None, callback=None, disable=Non
 
 # Add your personal samplers below here, just for formatting purposes ;3
 
+# Source for next 2 samplers: https://github.com/Koishi-Star/Euler-Smea-Dyn-Sampler
 @torch.no_grad()
 def dy_sampling_step(x, model, dt, sigma_hat, **extra_args):
 
@@ -1261,7 +1262,6 @@ def dy_sampling_step(x, model, dt, sigma_hat, **extra_args):
         x = x_expanded
 
     return x
-
 
 @torch.no_grad()
 def sample_euler_dy(model, x, sigmas, extra_args=None, callback=None, disable=None, s_churn=0., s_tmin=0.,
