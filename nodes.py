@@ -174,6 +174,44 @@ class SamplerSUPREME:
         sampler = comfy.samplers.ksampler("supreme", {"noise_sampler_type": noise_sampler_type, "step_method": step_method, "eta": eta, "centralization": centralization, "normalization": normalization, "edge_enhancement": edge_enhancement, "perphist": perphist, "substeps": substeps, "substep_method": substep_method, "noise_modulation": noise_modulation, "modulation_strength": modulation_strength, "modulation_dims": modulation_dims, "reversible_dampen": reversible_dampen, "s_noise": s_noise})
         return (sampler, )
 
+class SamplerEULER_DY:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required":
+                    {"s_churn": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 100.0, "step":0.01}),
+                     "s_tmin": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 100.0, "step":0.01}),
+                     "s_tmax": ("FLOAT", {"default": 100.0, "min": 0.0, "max": 100.0, "step":0.01}),
+                     "s_noise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step":0.01})
+                    }
+               }
+    RETURN_TYPES = ("SAMPLER",)
+    CATEGORY = "sampling/custom_sampling/samplers"
+
+    FUNCTION = "get_sampler"
+
+    def get_sampler(self, s_churn, s_tmin, s_tmax, s_noise):
+        sampler = comfy.samplers.ksampler("euler_dy", {"s_churn": s_churn, "s_tmin": s_tmin, "s_tmax": s_tmax, "s_noise": s_noise})
+        return (sampler, )
+    
+class SamplerSMEA_DY:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required":
+                    {"s_churn": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 100.0, "step":0.01}),
+                     "s_tmin": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 100.0, "step":0.01}),
+                     "s_tmax": ("FLOAT", {"default": 100.0, "min": 0.0, "max": 100.0, "step":0.01}),
+                     "s_noise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step":0.01})
+                    }
+               }
+    RETURN_TYPES = ("SAMPLER",)
+    CATEGORY = "sampling/custom_sampling/samplers"
+
+    FUNCTION = "get_sampler"
+
+    def get_sampler(self, s_churn, s_tmin, s_tmax, s_noise):
+        sampler = comfy.samplers.ksampler("smea_dy", {"s_churn": s_churn, "s_tmin": s_tmin, "s_tmax": s_tmax, "s_noise": s_noise})
+        return (sampler, )
+
 ### Schedulers
 from .extra_samplers import get_sigmas_simple_exponential
 class SimpleExponentialScheduler:
