@@ -1,12 +1,18 @@
 from .other_samplers.refined_exp_solver import sample_refined_exp_s
 from .extra_samplers import get_noise_sampler_names, prepare_noise
+
 import comfy.samplers
 import comfy.sample
 import comfy.sampler_helpers
 from comfy.k_diffusion import sampling as k_diffusion_sampling
+import node_helpers
+
 import latent_preview
 import torch
+import math
 from tqdm.auto import trange
+
+import kornia
 
 class SamplerRES_MOMENTUMIZED:
     @classmethod
@@ -145,9 +151,9 @@ class SamplerDPMPP_3M_SDE_DYN_ETA:
 class SamplerSUPREME:
     @classmethod
     def INPUT_TYPES(s):
-        SUBSTEP_METHODS=["euler", "dpm_1s", "dpm_2s", "dpm_3s", "bogacki_shampine", "rk4", "rkf45", "reversible_heun", "reversible_heun_1s", "reversible_bogacki_shampine", "trapezoidal"]
+        SUBSTEP_METHODS=["euler", "dpm_1s", "dpm_2s", "dpm_3s", "bogacki_shampine", "rk4", "rkf45", "reversible_heun", "reversible_heun_1s", "reversible_bogacki_shampine", "trapezoidal", "RES"]
         STEP_METHODS=SUBSTEP_METHODS+["dynamic", "adaptive_rk"]
-        NOISE_MODULATION_TYPES=["none", "intensity", "frequency"]
+        NOISE_MODULATION_TYPES=["none", "intensity", "frequency", "spectral_signum"]
         return {"required":
                     {"noise_sampler_type": (get_noise_sampler_names(),),
                      "step_method": (STEP_METHODS, ),
@@ -162,7 +168,7 @@ class SamplerSUPREME:
                      "noise_modulation": (NOISE_MODULATION_TYPES, {"default": "intensity"}),
                      "modulation_strength": ("FLOAT", {"default": 2.0, "min": -100.0, "max": 100.0, "step":0.01}),
                      "modulation_dims": ("INT", {"default": 3, "min": 1, "max": 3, "step":1}),
-                     "reversible_dampen": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step":0.01}),
+                     "reversible_eta": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step":0.01}),
                       }
                }
     RETURN_TYPES = ("SAMPLER",)
@@ -170,8 +176,8 @@ class SamplerSUPREME:
 
     FUNCTION = "get_sampler"
 
-    def get_sampler(self, noise_sampler_type, step_method, substep_method, eta, centralization, normalization, edge_enhancement, perphist, substeps, noise_modulation, modulation_strength, modulation_dims, reversible_dampen, s_noise):
-        sampler = comfy.samplers.ksampler("supreme", {"noise_sampler_type": noise_sampler_type, "step_method": step_method, "eta": eta, "centralization": centralization, "normalization": normalization, "edge_enhancement": edge_enhancement, "perphist": perphist, "substeps": substeps, "substep_method": substep_method, "noise_modulation": noise_modulation, "modulation_strength": modulation_strength, "modulation_dims": modulation_dims, "reversible_dampen": reversible_dampen, "s_noise": s_noise})
+    def get_sampler(self, noise_sampler_type, step_method, substep_method, eta, centralization, normalization, edge_enhancement, perphist, substeps, noise_modulation, modulation_strength, modulation_dims, reversible_eta, s_noise):
+        sampler = comfy.samplers.ksampler("supreme", {"noise_sampler_type": noise_sampler_type, "step_method": step_method, "eta": eta, "centralization": centralization, "normalization": normalization, "edge_enhancement": edge_enhancement, "perphist": perphist, "substeps": substeps, "substep_method": substep_method, "noise_modulation": noise_modulation, "modulation_strength": modulation_strength, "modulation_dims": modulation_dims, "reversible_eta": reversible_eta, "s_noise": s_noise})
         return (sampler, )
 
 ### Schedulers
@@ -555,11 +561,12 @@ class GeometricCFGGuider:
         return (guider,)
 
 class Guider_ImageGuidedCFG(comfy.samplers.CFGGuider):
-    def set_cfg(self, model, cfg1, image_cfg, latent_img, img_weighting):
+    def set_cfg(self, model, cfg1, image_cfg, latent_img, img_weighting, weight_scaling):
         self.cfg1 = cfg1
         self.icfg = image_cfg
         self.img = latent_img
         self.img_weighting = img_weighting
+        self.weight_scaling = weight_scaling
         self.model = model
 
     def set_conds(self, positive, negative):
@@ -584,11 +591,13 @@ class Guider_ImageGuidedCFG(comfy.samplers.CFGGuider):
             case "flat":
                 weight = 1.0
             case "linear down":
-                weight = (self.model.model.model_sampling.timestep(timestep) / 999.0)[:, None, None, None].clone()
+                weight = (timestep / self.model.model.model_sampling.sigma_max)[:, None, None, None].clone()
+            case "cosine down":
+                weight = ((-torch.cos(timestep / self.model.model.model_sampling.sigma_max * math.pi) / 2) + 0.5)[:, None, None, None].clone()
 
         cfg = comfy.samplers.cfg_function(self.inner_model, out[1], out[0], self.cfg1, x, timestep, model_options=model_options, cond=positive_cond, uncond=negative_cond)
 
-        return cfg + (cfg - res) * self.icfg / self.cfg1 / 10 * weight # Divide by 10 to mimic user-cfg. Do CFG - Res since the image is inverted the other way around.
+        return cfg + (cfg - res) * self.icfg * (weight**self.weight_scaling) # Divide by 10 to mimic user-cfg. Do CFG - Res since the image is inverted the other way around.
 
 class ImageGuidedCFGGuider:
     @classmethod
@@ -598,8 +607,9 @@ class ImageGuidedCFGGuider:
                     "positive": ("CONDITIONING", ),
                     "negative": ("CONDITIONING", ),
                     "cfg": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0, "step":0.1, "round": 0.01}),
-                    "image_cfg": ("FLOAT", {"default": 0.1, "min": -100.0, "max": 100.0, "step":0.1, "round": 0.01}),
-                    "image_weighting": (["flat", "linear down"], ),
+                    "image_cfg": ("FLOAT", {"default": 1.0, "min": -100.0, "max": 100.0, "step":0.01, "round": 0.001}),
+                    "image_weighting": (["flat", "linear down", "cosine down"], ),
+                    "weight_scaling": ("FLOAT", {"default": 1.0, "min": 0.01, "max": 100.0, "step":0.01, "round": 0.001}),
                     "latent_image": ("LATENT", ),
                      }
                 }
@@ -609,10 +619,10 @@ class ImageGuidedCFGGuider:
     FUNCTION = "get_guider"
     CATEGORY = "sampling/custom_sampling/guiders"
 
-    def get_guider(self, model, positive, negative, cfg, image_cfg, image_weighting, latent_image):
+    def get_guider(self, model, positive, negative, cfg, image_cfg, image_weighting, weight_scaling, latent_image):
         guider = Guider_ImageGuidedCFG(model)
         guider.set_conds(positive, negative) # Conds
-        guider.set_cfg(model, cfg, image_cfg, latent_image, image_weighting) # Strengths
+        guider.set_cfg(model, cfg, image_cfg, latent_image, image_weighting, weight_scaling) # Strengths
         return (guider,)
 
 class Guider_ScaledCFG(comfy.samplers.CFGGuider):
@@ -647,7 +657,7 @@ class ScaledCFGGuider:
                     "cond2": ("CONDITIONING", ),
                     "negative": ("CONDITIONING", ),
                     "cfg": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0, "step":0.1, "round": 0.01}),
-                    "cond2_alpha": ("FLOAT", {"default": 1.0, "min": -1.0, "max": 1.0, "step":0.01, "round": 0.01}),
+                    "cond2_alpha": ("FLOAT", {"default": 1.0, "min": -100.0, "max": 100.0, "step":0.01, "round": 0.01}),
                      }
                 }
 
@@ -657,7 +667,184 @@ class ScaledCFGGuider:
     CATEGORY = "sampling/custom_sampling/guiders"
 
     def get_guider(self, model, cond1, cond2, negative, cfg, cond2_alpha):
-        guider = Guider_GeometricCFG(model)
+        guider = Guider_ScaledCFG(model)
         guider.set_conds(cond1, cond2, negative) # Conds
         guider.set_cfg(cfg, cond2_alpha) # Strengths
+        return (guider,)
+
+class Guider_WarmupDecayCFG(comfy.samplers.CFGGuider):
+    def set_cfg(self, model, cfg_max, cfg_min, warmup_percent):
+        self.model = model
+        self.cfg_max = cfg_max
+        self.cfg_min = cfg_min
+        self.warmup_percent = warmup_percent
+
+    def set_conds(self, positive, negative):
+        self.inner_set_conds({"positive": positive, "negative": negative})
+
+
+    def predict_noise(self, x, timestep, model_options={}, seed=None):
+        negative_cond = self.conds.get("negative", None)
+        positive_cond = self.conds.get("positive", None)
+
+        out = comfy.samplers.calc_cond_batch(self.inner_model, [negative_cond, positive_cond], x, timestep, model_options) # negative, positive2, positive
+
+        sigma_max = self.model.model.model_sampling.sigma_max # 120
+        percent_sigma = self.model.model.model_sampling.percent_to_sigma(self.warmup_percent) # 30
+
+        if timestep > percent_sigma:
+            decay = (sigma_max - timestep) / (sigma_max - percent_sigma) # (1.0 - (120 - 110) / (120 - 90))
+            cfg_scale = 1/2 * (self.cfg_max - self.cfg_min)
+            cfg_cos = (1 + torch.cos((timestep / sigma_max) * math.pi))
+            mod_cfg = cfg_scale * cfg_cos * decay + self.cfg_min
+        else:
+            cfg_scale = 1/2 * (self.cfg_max - self.cfg_min)
+            cfg_cos = (1 + -torch.cos((timestep / percent_sigma) * math.pi))
+            mod_cfg = cfg_scale * cfg_cos + self.cfg_min
+
+        cfg = comfy.samplers.cfg_function(self.inner_model, out[1], out[0], mod_cfg, x, timestep, model_options=model_options, cond=positive_cond, uncond=negative_cond)
+        return cfg
+
+class WarmupDecayCFGGuider:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required":
+                    {"model": ("MODEL",),
+                    "positive": ("CONDITIONING", ),
+                    "negative": ("CONDITIONING", ),
+                    "cfg_max": ("FLOAT", {"default": 12.0, "min": 0.0, "max": 100.0, "step":0.1, "round": 0.01}),
+                    "cfg_min": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step":0.1, "round": 0.01}),
+                    "warmup_percent": ("FLOAT", {"default": 0.5, "min": 0.01, "max": 1.0, "step":0.01, "round": 0.01}),
+                     }
+                }
+
+    RETURN_TYPES = ("GUIDER",)
+
+    FUNCTION = "get_guider"
+    CATEGORY = "sampling/custom_sampling/guiders"
+
+    def get_guider(self, model, positive, negative, cfg_max, cfg_min, warmup_percent):
+        guider = Guider_WarmupDecayCFG(model)
+        guider.set_conds(positive, negative) # Conds
+        guider.set_cfg(model, cfg_max, cfg_min, warmup_percent) # Strengths
+        return (guider,)
+
+class Guider_MegaCFG(comfy.samplers.CFGGuider):
+    def set_cfg(self, model, cfg_max, cfg_min, warmup_percent, mean_cfg):
+        self.model = model
+        self.cfg_max = cfg_max
+        self.cfg_min = cfg_min
+        self.warmup_percent = warmup_percent
+        self.mean_cfg = mean_cfg
+
+        self.prev_cond = None
+        self.prev_cfg = None
+
+    def set_conds(self, positive, negative):
+        self.inner_set_conds({"positive": positive, "negative": negative})
+
+    def set_img_cfg(self, image_guidance, image_weighting, weight_scaling, latent_image):
+        self.image_guidance = image_guidance
+        self.image_weighting = image_weighting
+        self.weight_scaling = weight_scaling
+        self.latent_image = latent_image
+
+    def post_cfg_reference_img(self, args):
+        model = args["model"]
+        cond_pred = args["cond_denoised"]
+        cfg_result = args["denoised"]
+        sigma = args["sigma"]
+
+        ref = self.latent_image["samples"].to(cfg_result.device)
+
+        if self.image_guidance == 0:
+            return cfg_result
+
+        norm_out1 = torch.linalg.norm(cond_pred) # Get norm of positive cond
+
+        ref = ref - cond_pred * (cond_pred / norm_out1 * (ref / norm_out1)).sum() # Project positive cond onto image
+        ref *= torch.linalg.norm(cond_pred) / torch.linalg.norm(ref) # Normalize to cond
+        ref = self.model.model.model_sampling.calculate_denoised(sigma, ref, cond_pred)
+
+        sigma_max = self.model.model.model_sampling.sigma_max
+
+        weight = 1.0
+        match self.image_weighting:
+            case "linear down":
+                weight = (sigma / sigma_max)[:, None, None, None].clone()
+            case "cosine down":
+                weight = ((-torch.cos((sigma / sigma_max) * math.pi) / 2) + 0.5)[:, None, None, None].clone()
+
+        return cfg_result + (cond_pred - ref) * self.image_guidance * (weight**self.weight_scaling)
+
+    def predict_noise(self, x, timestep, model_options={}, seed=None):
+        negative_cond = self.conds.get("negative", None)
+        positive_cond = self.conds.get("positive", None)
+
+        out = comfy.samplers.calc_cond_batch(self.inner_model, [negative_cond, positive_cond], x, timestep, model_options) # negative, positive2, positive
+
+        out0_mean = out[0].mean(dim=(1, 2, 3), keepdim=True)
+        out1_mean = out[1].mean(dim=(1, 2, 3), keepdim=True)
+        if self.mean_cfg != 0:
+            out[0] -= out0_mean
+            out[1] -= out1_mean
+
+        sigma_max = self.model.model.model_sampling.sigma_max # 120
+        percent_sigma = self.model.model.model_sampling.percent_to_sigma(self.warmup_percent) # 30
+
+        if timestep > percent_sigma:
+            decay = (sigma_max - timestep) / (sigma_max - percent_sigma) # (1.0 - (120 - 110) / (120 - 90))
+            cfg_scale = 1/2 * (self.cfg_max - self.cfg_min)
+            cfg_cos = (1 + torch.cos((timestep / sigma_max) * math.pi))
+            mod_cfg = cfg_scale * cfg_cos * decay + self.cfg_min
+        else:
+            cfg_scale = 1/2 * (self.cfg_max - self.cfg_min)
+            cfg_cos = (1 + -torch.cos((timestep / percent_sigma) * math.pi))
+            mod_cfg = cfg_scale * cfg_cos + self.cfg_min
+
+        cfg = comfy.samplers.cfg_function(self.inner_model, out[1], out[0], mod_cfg, x, timestep, model_options=model_options, cond=positive_cond, uncond=negative_cond)
+
+        if self.mean_cfg != 0:
+            cfg += out0_mean + (out1_mean - out0_mean) * self.mean_cfg
+
+        self.prev_cfg = cfg
+        self.prev_cond = out[1]
+
+        return cfg
+
+class MegaCFGGuider:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required":
+                    {"model": ("MODEL",),
+                    "positive": ("CONDITIONING", ),
+                    "negative": ("CONDITIONING", ),
+                    "cfg_max": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0, "step":0.1, "round": 0.01}),
+                    "cfg_min": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step":0.1, "round": 0.01}),
+                    "warmup_percent": ("FLOAT", {"default": 0.5, "min": 0.01, "max": 1.0, "step":0.01, "round": 0.001}),
+                    "mean_cfg": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 100.0, "step":0.1, "round": 0.01}),
+                     },
+                "optional":
+                    {
+                    "image_guidance": ("FLOAT", {"default": 1.0, "min": -1000.0, "max": 1000.0, "step":0.01, "round": 0.001}),
+                    "image_weighting": (["linear down", "cosine down"], ),
+                    "weight_scaling": ("FLOAT", {"default": 1.0, "min": 0.01, "max": 100.0, "step":0.01, "round": 0.001}),
+                    "latent_image": ("LATENT", ),
+                    }
+                }
+
+    RETURN_TYPES = ("GUIDER",)
+
+    FUNCTION = "get_guider"
+    CATEGORY = "sampling/custom_sampling/guiders"
+
+    def get_guider(self, model, positive, negative, cfg_max, cfg_min, warmup_percent, mean_cfg,
+                    image_guidance, image_weighting, weight_scaling, latent_image = None):
+        m = model.clone()
+        guider = Guider_MegaCFG(m)
+        guider.set_conds(positive, negative) # Conds
+        guider.set_cfg(m, cfg_max, cfg_min, warmup_percent, mean_cfg) # Strengths
+        if latent_image != None:
+            guider.set_img_cfg(image_guidance, image_weighting, weight_scaling, latent_image)
+            m.set_model_sampler_post_cfg_function(guider.post_cfg_reference_img)
         return (guider,)

@@ -13,6 +13,8 @@ NODE_CLASS_MAPPINGS = {
     "GeometricCFGGuider": nodes.GeometricCFGGuider,
     "ImageAssistedCFGGuider": nodes.ImageGuidedCFGGuider,
     "ScaledCFGGuider": nodes.ScaledCFGGuider,
+    "WarmupDecayCFGGuider": nodes.WarmupDecayCFGGuider,
+    "MegaCFGGuider": nodes.MegaCFGGuider,
     ## Samplers
     "SamplerRES_Momentumized": nodes.SamplerRES_MOMENTUMIZED,
     "SamplerDPMPP_DualSDE_Momentumized": nodes.SamplerDPMPP_DUALSDE_MOMENTUMIZED,
