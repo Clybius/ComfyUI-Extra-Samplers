@@ -1,0 +1,15 @@
+[project]
+name = "comfyui-extra-samplers"
+description = "Nodes: SamplerCustomNoise, SamplerCustomNoiseDuo, SamplerCustomModelMixtureDuo, SamplerRES_Momentumized, SamplerDPMPP_DualSDE_Momentumized, SamplerCLYB_4M_SDE_Momentumized, SamplerTTM, SamplerLCMCustom\nThis extension provides various custom samplers not offered by the default nodes in ComfyUI."
+version = "1.0.0"
+license = "LICENSE"
+dependencies = ["kornia"]
+
+[project.urls]
+Repository = "https://github.com/Clybius/ComfyUI-Extra-Samplers"
+#  Used by Comfy Registry https://comfyregistry.org
+
+[tool.comfy]
+PublisherId = ""
+DisplayName = "ComfyUI-Extra-Samplers"
+Icon = ""
