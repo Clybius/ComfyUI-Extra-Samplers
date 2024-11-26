@@ -565,7 +565,8 @@ from .other_samplers.refined_exp_solver import sample_refined_exp_s
 def sample_res_solver(model, x, sigmas, extra_args=None, callback=None, disable=None, noise_sampler_type="gaussian", noise_sampler=None, denoise_to_zero=True, simple_phi_calc=False, c2=0.5, ita=torch.Tensor((0.25,)), momentum=0.0):
     if len(sigmas) <= 1:
         return x
-    noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
+    if noise_sampler is None:
+        noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
     return sample_refined_exp_s(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, noise_sampler=noise_sampler if noise_sampler is not None else get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args), denoise_to_zero=denoise_to_zero, simple_phi_calc=simple_phi_calc, c2=c2, ita=ita, momentum=momentum)
 
 @torch.no_grad()
@@ -671,27 +672,31 @@ def sample_dpmpp_dualsde_momentum(model, x, sigmas, extra_args=None, callback=No
 def sample_dpmpp_dualsdemomentum(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1., s_noise=1., noise_sampler_type="gaussian", noise_sampler=None, r=1/2, momentum=0.0):
     if len(sigmas) <= 1:
         return x
-    noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
+    if noise_sampler is None:
+        noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
     return sample_dpmpp_dualsde_momentum(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta=eta, s_noise=s_noise, noise_sampler=noise_sampler if noise_sampler is not None else get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args), r=r, momentum=momentum)
 
 from .other_samplers.sample_ttm import sample_ttm_jvp
 def sample_ttmcustom(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1., s_noise=1., noise_sampler_type="gaussian",noise_sampler=None):
     if len(sigmas) <= 1:
         return x
-    noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
+    if noise_sampler is None:
+        noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
     return sample_ttm_jvp(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta=eta, s_noise=s_noise, noise_sampler=noise_sampler if noise_sampler is not None else get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args))
 
 from comfy.k_diffusion.sampling import sample_lcm
 def sample_lcmcustom(model, x, sigmas, extra_args=None, callback=None, disable=None, noise_sampler_type="gaussian", noise_sampler=None):
     if len(sigmas) <= 1:
         return x
-    noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
+    if noise_sampler is None:
+        noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
     return sample_lcm(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, noise_sampler=noise_sampler if noise_sampler is not None else get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args))
 
 def sample_clyb_4m_sde(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1., s_noise=1., noise_sampler_type="brownian", noise_sampler=None, momentum=0.0):
     if len(sigmas) <= 1:
         return x
-    noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
+    if noise_sampler is None:
+        noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
     return sample_clyb_4m_sde_momentumized(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta=eta, s_noise=s_noise, noise_sampler=noise_sampler if noise_sampler is not None else get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args), momentum=momentum)
 
 
@@ -808,7 +813,8 @@ def sampler_dpmpp_3m_sde_dynamic_eta(model, x, sigmas, extra_args=None, callback
 def sample_dpmpp_3m_sde_dynamic_eta(model, x, sigmas, extra_args=None, callback=None, disable=None, eta_max=1.0, eta_min=0.0, s_noise=1., noise_sampler_type="brownian", noise_sampler=None):
     if len(sigmas) <= 1:
         return x
-    noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
+    if noise_sampler is None:
+        noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
     return sampler_dpmpp_3m_sde_dynamic_eta(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta_max=eta_max, eta_min=eta_min, s_noise=s_noise, noise_sampler=noise_sampler if noise_sampler is not None else get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args))
 
 
@@ -1347,7 +1353,8 @@ def sampler_supreme(model, x, sigmas, extra_args=None, callback=None, disable=No
 def sample_supreme(model, x, sigmas, extra_args=None, callback=None, disable=None, s_noise=1., noise_sampler_type="gaussian", noise_sampler=None, eta=1.0, step_method="RES", substep_method="euler", warmup_method="euler", centralization=0.00, normalization=0.00, edge_enhancement=0.00, perphist=0.25, substeps=2, noise_modulation="none", modulation_strength=2., modulation_dims=3, reversible_eta=1.0, dyneta=True, reversible_dyneta=True, enable_free_reverse=True, free_reverse_eta=0.0, free_reverse_dyneta=True):
     if len(sigmas) <= 1:
         return x
-    noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
+    if noise_sampler is None:
+        noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
     return sampler_supreme(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, s_noise=s_noise, noise_sampler=noise_sampler if noise_sampler is not None else get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args), eta=eta, step_method=step_method, substep_method=substep_method, warmup_method=warmup_method, centralization=centralization, normalization=normalization, edge_enhancement=edge_enhancement, perphist=perphist, substeps=substeps, noise_modulation=noise_modulation, modulation_strength=modulation_strength, modulation_dims=modulation_dims, reversible_eta=reversible_eta, dyneta=dyneta, reversible_dyneta=reversible_dyneta, enable_free_reverse=enable_free_reverse, free_reverse_eta=free_reverse_eta, free_reverse_dyneta=free_reverse_dyneta)
 
 @torch.no_grad()
@@ -1423,7 +1430,8 @@ def sample_sens(model, x, sigmas, extra_args=None, callback=None, disable=None, 
     flow = False
     if isinstance(model.inner_model.inner_model.model_sampling, comfy.model_sampling.CONST):
         flow = True
-    noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
+    if noise_sampler is None:
+        noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
     return sampler_sens(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta=eta, rsde_eta=rsde_eta, tsde_eta=tsde_eta, s_noise=s_noise, noise_sampler=noise_sampler if noise_sampler is not None else get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args), flow=flow)
 
 #From https://github.com/zju-pi/diff-sampler/blob/main/diff-solvers-main/solvers.py
@@ -1512,7 +1520,8 @@ def sampler_ipndm_vapp(model, x, sigmas, extra_args=None, callback=None, disable
 def sample_ipndm_vapp(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1., s_noise=1., max_order=4, noise_sampler_type="gaussian", noise_sampler=None, pp_guidance=1.0):
     if len(sigmas) <= 1:
         return x
-    noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
+    if noise_sampler is None:
+        noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
     return sampler_ipndm_vapp(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta=eta, s_noise=s_noise, max_order=max_order, noise_sampler=noise_sampler if noise_sampler is not None else get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args), pp_guidance=pp_guidance)
 
 
@@ -1757,7 +1766,8 @@ def sample_SHIDS(model, x, sigmas, extra_args=None, callback=None, disable=None,
     flow = False
     if isinstance(model.inner_model.inner_model.model_sampling, comfy.model_sampling.CONST):
         flow = True
-    noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
+    if noise_sampler is None:
+        noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
     return sampler_SHIDS(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta=eta, s_noise=s_noise, noise_sampler=noise_sampler if noise_sampler is not None else get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args), order=order, eta_order=eta_order, solver_method=solver_method, flow=flow)
 
 @torch.no_grad()
@@ -1859,7 +1869,8 @@ def sample_dpmpp_2m_sde_ema(model, x, sigmas, extra_args=None, callback=None, di
     flow = False
     if isinstance(model.inner_model.inner_model.model_sampling, comfy.model_sampling.CONST):
         flow = True
-    noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
+    if noise_sampler is None:
+        noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
     return sampler_dpmpp_2m_sde_ema(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta=eta, s_noise=s_noise, noise_sampler=noise_sampler if noise_sampler is not None else get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args), amp_fac=amp_fac, beta1=beta1, beta2=beta2, weight_decay=weight_decay, centralization=centralization, normalization=normalization, flow=flow)
 
 @torch.no_grad()
@@ -1941,7 +1952,8 @@ def sample_biscope(model, x, sigmas, extra_args=None, callback=None, disable=Non
     flow = False
     if isinstance(model.inner_model.inner_model.model_sampling, comfy.model_sampling.CONST):
         flow = True
-    noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
+    if noise_sampler is None:
+        noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
     return sampler_biscope(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta=eta, s_noise=s_noise, noise_sampler=noise_sampler if noise_sampler is not None else get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args), amp_fac=amp_fac, local_smoothing_fac=local_smoothing_fac, smoothing_fac=smoothing_fac, ema_fac=ema_fac, flow=flow)
 
 def gaussian_kernel_2d(kernel_size, sigma):
@@ -2045,7 +2057,8 @@ def sample_euler_g(model, x, sigmas, extra_args=None, callback=None, disable=Non
     flow = False
     if isinstance(model.inner_model.inner_model.model_sampling, comfy.model_sampling.CONST):
         flow = True
-    noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
+    if noise_sampler is None:
+        noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
     return sampler_euler_g(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, eta=eta, s_noise=s_noise, noise_sampler=noise_sampler if noise_sampler is not None else get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args), g_eta=g_eta, sigma=sigma, order=order, flow=flow)
 
 @torch.no_grad()
@@ -2109,7 +2122,8 @@ def sample_leaping_euler(model, x, sigmas, extra_args=None, callback=None, disab
     flow = False
     if isinstance(model.inner_model.inner_model.model_sampling, comfy.model_sampling.CONST):
         flow = True
-    noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
+    if noise_sampler is None:
+        noise_sampler, extra_args = check_set_immiscible(x, noise_sampler_type, extra_args)
     return sampler_leaping_euler(model, x, sigmas, extra_args=extra_args, callback=callback, disable=disable, leap=leap, eta=eta, s_noise=s_noise, noise_sampler=noise_sampler if noise_sampler is not None else get_noise_sampler(x, sigmas, noise_sampler_type, noise_sampler, extra_args), flow=flow)
 
 # Add your personal samplers below here, just for formatting purposes ;3
