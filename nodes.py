@@ -455,7 +455,7 @@ class SimpleExponentialScheduler:
         if denoise < 1.0:
             total_steps = int(steps/denoise)
 
-        sigmas = get_sigmas_simple_exponential(model.model, total_steps).cpu()
+        sigmas = get_sigmas_simple_exponential(model.get_model_object("model_sampling"), total_steps).cpu()
         sigmas = sigmas[-(steps + 1):]
         return (sigmas, )
 
@@ -479,7 +479,7 @@ class SimpleKLOptimalScheduler:
         if denoise < 1.0:
             total_steps = int(steps/denoise)
 
-        sigmas = get_sigmas_simple_kl_optimal(model.model, total_steps).cpu()
+        sigmas = get_sigmas_simple_kl_optimal(model.get_model_object("model_sampling"), total_steps).cpu()
         sigmas = sigmas[-(steps + 1):]
         return (sigmas, )
 
@@ -503,7 +503,7 @@ class KLOptimalScheduler:
         if denoise < 1.0:
             total_steps = int(steps/denoise)
 
-        sigmas = get_sigmas_kl_optimal(model.model, total_steps).cpu()
+        sigmas = get_sigmas_kl_optimal(model.get_model_object("model_sampling"), total_steps).cpu()
         sigmas = sigmas[-(steps + 1):]
         return (sigmas, )
 

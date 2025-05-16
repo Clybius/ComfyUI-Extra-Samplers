@@ -1,8 +1,19 @@
 from . import extra_samplers
 from . import nodes
+extra_schedulers = extra_samplers.extra_schedulers
 
+from comfy.samplers import SchedulerHandler, SCHEDULER_HANDLERS, SCHEDULER_NAMES
 extra_samplers.add_samplers()
 #extra_samplers.add_schedulers()
+for key, value in extra_schedulers.items():
+    scheduler_name = f"{key}"
+    if scheduler_name not in SCHEDULER_HANDLERS:
+        scheduler_handler = SchedulerHandler(handler=value, use_ms=True)
+        SCHEDULER_HANDLERS[scheduler_name] = scheduler_handler
+        if scheduler_name not in SCHEDULER_NAMES:
+            SCHEDULER_NAMES.append(scheduler_name)
+
+
 
 NODE_CLASS_MAPPINGS = {
     ## K-Samplers

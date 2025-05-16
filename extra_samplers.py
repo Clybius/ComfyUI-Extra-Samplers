@@ -2138,8 +2138,8 @@ discard_penultimate_sigma_samplers = set((
     "clyb_4m_sde_momentumized"
 ))
 
-def get_sigmas_simple_exponential(model, steps):
-    s = model.model_sampling
+def get_sigmas_simple_exponential(model_sampling, steps):
+    s = model_sampling
     sigs = []
     ss = len(s.sigmas) / steps
     for x in range(steps):
@@ -2149,8 +2149,8 @@ def get_sigmas_simple_exponential(model, steps):
     exp = torch.exp(torch.log(torch.linspace(1, 0, steps + 1)))
     return sigs * exp
 
-def get_sigmas_kl_optimal(model, steps):
-    s = model.model_sampling
+def get_sigmas_kl_optimal(model_sampling, steps):
+    s = model_sampling
     sigs = []
     alpha_min = torch.arctan(s.sigma_min).item()
     alpha_max = torch.arctan(s.sigma_max).item()
@@ -2158,8 +2158,8 @@ def get_sigmas_kl_optimal(model, steps):
         sigs += [torch.tan(torch.tensor(((x/steps) * alpha_min + (1.0-x/steps) * alpha_max)))]
     return torch.FloatTensor(sigs)
 
-def get_sigmas_simple_kl_optimal(model, steps):
-    s = model.model_sampling
+def get_sigmas_simple_kl_optimal(model_sampling, steps):
+    s = model_sampling
     sigs = []
     idx_list = []
     ss = len(s.sigmas) / steps
